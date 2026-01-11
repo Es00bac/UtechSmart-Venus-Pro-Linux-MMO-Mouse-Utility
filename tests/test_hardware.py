@@ -1,3 +1,11 @@
+from pathlib import Path
+import sys
+
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "venus_protocol.py").exists():
+        sys.path.insert(0, str(_parent))
+        break
+
 
 import unittest
 import venus_protocol as vp

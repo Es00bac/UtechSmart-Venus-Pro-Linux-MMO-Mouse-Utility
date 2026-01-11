@@ -938,7 +938,19 @@ class DeviceInfo:
     interface_number: int = 0  # Added to track interface
 
 
-def list_devices(exclude_receivers: bool = True) -> list[DeviceInfo]:
+def _device_sort_key(info: DeviceInfo) -> tuple[int, int, str]:
+    product_lower = info.product.lower()
+    is_receiver = "receiver" in product_lower
+    if info.interface_number == 1:
+        interface_rank = 0
+    elif info.interface_number == 0:
+        interface_rank = 1
+    else:
+        interface_rank = 2
+    return (1 if is_receiver else 0, interface_rank, info.product)
+
+
+def list_devices(exclude_receivers: bool = False) -> list[DeviceInfo]:
     devices = []
     seen_paths = set()
     for item in hid.enumerate(VENDOR_ID, 0):
@@ -947,8 +959,8 @@ def list_devices(exclude_receivers: bool = True) -> list[DeviceInfo]:
         
         product = item.get("product_string") or "Unknown"
         
-        # Filter out "Wireless Receiver" if requested, as it doesn't support configuration
-        if exclude_receivers and "Receiver" in product:
+        # Filter out "Wireless Receiver" only when explicitly requested.
+        if exclude_receivers and "receiver" in product.lower():
             continue
         
         # Prefer "Dual Mode Mouse" on Interface 0 (the actual configurable device)
@@ -959,6 +971,8 @@ def list_devices(exclude_receivers: bool = True) -> list[DeviceInfo]:
         
         path_str = item["path"].decode() if isinstance(item["path"], bytes) else item["path"]
             
+        if path_str in seen_paths:
+            continue
         seen_paths.add(path_str)
 
         devices.append(
@@ -973,8 +987,8 @@ def list_devices(exclude_receivers: bool = True) -> list[DeviceInfo]:
             )
         )
         
-    # Sort devices: Interface 1 first (for testing writes), then Interface 0
-    devices.sort(key=lambda d: d.interface_number, reverse=True)
+    # Sort devices: non-receiver first, then preferred interface (1 before 0).
+    devices.sort(key=_device_sort_key)
     
     return devices
 

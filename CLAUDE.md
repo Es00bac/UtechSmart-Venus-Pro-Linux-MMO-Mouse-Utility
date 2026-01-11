@@ -69,4 +69,4 @@ python3 test_checksum_necessity.py
 - **Wired mode required** for reliable configuration writes to flash
 - Protocol derived from USB capture analysis (32+ captures in `usbcap/`)
 - Memory dumps in `dumps/` used to verify flash memory layout
-- See `NEW_PROTOCOL.md` for complete USB HID protocol specification
+- See `PROTOCOL.md` for the current USB HID protocol specification

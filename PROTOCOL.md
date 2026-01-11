@@ -1,22 +1,20 @@
-# UtechSmart Venus Pro (Wireless) USB Protocol Notes
+# UtechSmart Venus Pro USB HID Protocol
 
-This document summarizes what can be inferred from the provided USBPcap captures.
-Everything here is based on observed traffic; unknown fields are called out.
+This is the single source of truth for the Venus Pro configuration protocol, derived
+from captures and the current `venus_protocol.py` implementation. Wired and wireless
+mode share the same configuration format and commands.
 
-## Device IDs
+## Device IDs and Interfaces
 - Vendor ID: `0x25A7`
-- Product IDs observed:
-  - `0xFA07` (mouse)
-  - `0xFA08` (wireless receiver)
-
-## Transport
-- USB HID class interface.
-- Configuration updates are sent as **HID Set_Report (Feature)** requests.
-- Report ID is always `0x08`.
-- Observed `wIndex` for Set_Report is `1` (interface 1).
+- Product IDs:
+  - `0xFA08` = 2.4G Dual Mode Mouse (wired connection)
+  - `0xFA07` = 2.4G Wireless Receiver (wireless dongle)
+- Configuration is sent as HID **Feature Reports** on the vendor interface.
+  - Interface `1` is the config interface on most firmware.
+  - Interface `0` is accepted on some firmware; the code will use either.
 
 ## Report Format
-All configuration reports are **17 bytes**:
+All configuration packets are 17 bytes:
 
 ```
 Byte 0  : Report ID (0x08)
@@ -25,243 +23,177 @@ Byte 2-15 : Payload (14 bytes)
 Byte 16 : Checksum
 ```
 
-### Checksum
-Checksum is computed over bytes 0-15 (report ID + command + payload):
-
+Checksum (sum of bytes 0..15 must equal 0x55):
 ```
 checksum = (0x55 - sum(bytes[0..15])) & 0xFF
 ```
 
-This matches all observed packets.
+Responses arrive as Report ID `0x09`, echoing the command. For reads (`0x08`),
+the response payload includes `[page][offset][len][data...]`.
 
-## Command IDs (Observed)
-- `0x03` : Session start / begin write (payload all zeroes)
-- `0x04` : Session commit / end write (payload all zeroes)
-- `0x07` : Configuration write (payload varies by feature)
-- `0x09` : Reset to defaults (payload all zeroes)
+## Command Summary
+- `0x03`: Handshake / ready
+- `0x04`: Prepare / commit (sent before and after write sequences)
+- `0x07`: Write flash (page/offset addressing)
+- `0x08`: Read flash
+- `0x09`: Reset to defaults
+- `0x4D`, `0x01`: Magic unlock sequence for macro/page-3 writes (used by `unlock()`)
 
-The exact semantics of `0x03` and `0x04` are inferred from usage patterns.
+Typical write flow:
+1. `0x04` (prepare)
+2. `0x03` (handshake)
+3. One or more `0x07` writes
+4. `0x04` (commit)
 
-### Command 0x07 Addressing
-For writes, the first three payload bytes encode a flash address:
-
+## Addressing and Profiles
+Flash is 256 pages x 256 bytes. Write/read payloads use:
 ```
-payload[0] = 0x00
-payload[1] = page
-payload[2] = offset
-payload[3..] = data (11 bytes)
-```
-
-This matches the addresses seen in CLAUDE_PROTOCOL.md and the USB captures.
-
-## Button Numbering (Image Reference)
-- Buttons 1-12: thumb keypad (side buttons)
-- Button 13: upper side button (above the keypad)
-- Button 14: left click
-- Button 15: middle click (wheel)
-- Button 16: right click
-
-## Button Binding (Keyboard)
-Observed for binding button 1 to `A`, button 2 to `B`, button 12 to `L`.
-
-### Button Codes (Observed)
-The mouse has 16 configurable buttons. Based on CLAUDE_PROTOCOL.md (flash layout) and
-captures, side buttons 1-12 map to contiguous keyboard + mouse regions. Buttons 13-16
-still need confirmed mappings.
-
-Side button mapping (keyboard page/offset + mouse region offset):
-
-| Button | Page | Offset | Mouse Offset |
-|--------|------|--------|--------------|
-| 1      | 01   | 00     | 60           |
-| 2      | 01   | 20     | 64           |
-| 3      | 01   | 40     | 68           |
-| 4      | 01   | 60     | 6C           |
-| 5      | 01   | 80     | 70           |
-| 6      | 01   | A0     | 74           |
-| 7      | 02   | 40     | 88           |
-| 8      | 02   | 60     | 8C           |
-| 9      | 02   | 80     | 90           |
-| 10     | 02   | A0     | 94           |
-| 11     | 02   | C0     | 98           |
-| 12     | 02   | E0     | 9C           |
-
-Buttons 13-16 (upper side and left/middle/right clicks) are still unknown and need
-captures to fill in.
-
-### Keyboard binding packet
-Command `0x07`, payload bytes (index 2-15):
-
-```
-00
-<code_hi> <code_lo>
-08 02 81
-<hid_key> 00 41 <hid_key> 00
-<guard> 00 00
+[0x00, page, offset, length, data...]
 ```
 
-`<guard>` appears to be `0x91 - (2 * hid_key)` (fits A/B/L).
+Profiles are page-base offsets:
+- Profile 1: `0x00`
+- Profile 2: `0x40`
+- Profile 3: `0x80`
+- Profile 4: `0xC0`
 
-### Apply binding packet
-Command `0x07`, payload bytes (index 2-15):
+When writing profile-specific data, add the base to the page number (e.g., keyboard
+page `0x01` becomes `0x41` for Profile 2).
 
+## Button Map
+Each button has:
+- a **keyboard definition slot** (`code_hi` page, `code_lo` offset)
+- an **apply slot** (`apply_offset`) in Page 0x00 + profile base
+
+| Button | Label | code_hi | code_lo | apply_offset |
+|--------|-------|---------|---------|--------------|
+| 1 | Side Button 1 | 0x01 | 0x00 | 0x60 |
+| 2 | Side Button 2 | 0x01 | 0x20 | 0x64 |
+| 3 | Side Button 3 | 0x01 | 0x40 | 0x68 |
+| 4 | Side Button 4 | 0x01 | 0x60 | 0x6C |
+| 5 | Side Button 5 | 0x01 | 0x80 | 0x70 |
+| 6 | Side Button 6 | 0x01 | 0xA0 | 0x74 |
+| 7 | Side Button 7 | 0x02 | 0x00 | 0x80 |
+| 8 | Side Button 8 | 0x02 | 0x20 | 0x84 |
+| 9 | Side Button 9 | 0x02 | 0x80 | 0x90 |
+| 10 | Side Button 10 | 0x02 | 0xA0 | 0x94 |
+| 11 | Side Button 11 | 0x02 | 0xC0 | 0x98 |
+| 12 | Side Button 12 | 0x02 | 0xE0 | 0x9C |
+| 13 | Fire Key | 0x02 | 0x60 | 0x8C |
+| 14 | Left Click | 0x01 | 0xE0 | 0x7C |
+| 15 | Middle Click | 0x02 | 0x40 | 0x88 |
+| 16 | Right Click | 0x01 | 0xC0 | 0x78 |
+
+## Apply Slot Format (Bindings)
+Bindings are 4-byte entries written at the `apply_offset` in page `0x00 + base`:
 ```
-00 00 <apply_offset> 04 05 00 00 50 00 00 00 00 00 00
+[00, page, offset, 04, type, d1, d2, d3, 00...]
 ```
 
-The `0x05` action type and `0x50` action code were seen for keyboard binds.
+Action types (d3 = `0x55 - (type + d1 + d2)` when noted):
+- `0x00`: Disabled (d3 = `0x55`)
+- `0x01`: Mouse button
+  - d1 = button mask (`0x01` left, `0x02` right, `0x04` middle, `0x08` back, `0x10` forward)
+  - forward/back captures show d3 = `0x44` / `0x4C` respectively
+- `0x02`: DPI control (d1 selects function, d3 = 0x50)
+- `0x04`: Special (Fire/Triple) (d1 = delay ms, d2 = repeat count, d3 computed)
+- `0x05`: Keyboard (binds to key definition slot, d3 computed)
+- `0x06`: Macro (d1 = macro index, d2 = repeat mode, d3 computed)
+- `0x07`: Poll rate toggle (d3 computed)
+- `0x08`: RGB toggle (d3 computed)
 
-## Forward / Back
-Observed for button 1 (Forward) and button 2 (Back).
+## Keyboard Definition Slots
+Keyboard slots are stored at `code_hi + base` / `code_lo` in 0x20-byte blocks.
+The payload starts with a count, followed by event triples, and a guard byte:
 
-### Forward
-Payload (index 2-15):
-
+Simple key (no modifiers):
 ```
-00 00 <apply_offset> 04 01 10 00 44 00 00 00 00 00 00
-```
-
-### Back
-Payload (index 2-15):
-
-```
-00 00 <apply_offset> 04 01 08 00 4C 00 00 00 00 00 00
-```
-
-## Macro Upload
-Macro data is uploaded as a sequence of `0x07` packets with a chunked buffer.
-
-### Macro chunk packet
-Payload bytes (index 2-15):
-
-```
-00 03 <offset> <chunk_len> <data[10 bytes]>
+count=2
+events: [0x81, key, 0x00] [0x41, key, 0x00]
+guard = (0x91 - (key * 2)) & 0xFF
 ```
 
-- Offsets increment by `0x0A` (10 bytes).
-- `chunk_len` is usually `0x0A`, but the final chunk can be shorter.
+Modifier key:
+```
+count=4
+events: [0x80, mod, 0x00] [0x81, key, 0x00] [0x40, mod, 0x00] [0x41, key, 0x00]
+guard = (0x91 - (key * 2) + 0x3A) & 0xFF
+```
 
-### Macro buffer layout (observed)
-- Offset `0x00`: one byte = UTF-16LE name length in bytes.
-- Offset `0x01..0x1E`: UTF-16LE name bytes (30 bytes, padded with `00`).
-- Offset `0x1F`: event count (number of 5-byte events).
-- Offset `0x20..`: macro event data.
+## Macro Storage
+Macro slots are 384 bytes each:
+```
+base = 0x300
+slot_addr = base + (index * 0x180)
+page = slot_addr >> 8
+offset = slot_addr & 0xFF
+```
 
-Event format (5 bytes):
+Macro buffer layout:
+- `0x00`: UTF-16LE name length (bytes)
+- `0x01..0x1E`: name bytes
+- `0x1F`: event count
+- `0x20..`: events (5 bytes each)
+
+Event format:
 ```
 [status] [keycode] 00 [delay_hi] [delay_lo]
+status: 0x81 key down, 0x41 key up, 0x80 mod down, 0x40 mod up
 ```
-- `status`: `0x81` = key down, `0x41` = key up, `0x80/0x40` for modifiers.
-- The last event must use delay `0x0003` (3 ms) as the end marker.
 
 Terminator (4 bytes) immediately after the last event:
 ```
 [checksum] 00 00 00
-```
-
-Checksum formula (verified against Windows writes):
-```
 checksum = (~sum(events) - event_count + 0x56) & 0xFF
 ```
-Where `events` is exactly `event_count * 5` bytes (no header bytes included).
 
-Example (macro name "my_macro", text "testing", 10ms delays):
-```
-10 6d 00 79 00 5f 00 6d 00 61 00 63 00 72 00 6f
-00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0e
-81 17 00 00 0a 41 17 00 00 0a 81 08 00 00 0a 41
-08 00 00 0a 81 16 00 00 0a 41 16 00 00 0a 81 17
-00 00 0a 41 17 00 00 0a 81 0c 00 00 0a 41 0c 00
-00 0a 81 11 00 00 0a 41 11 00 00 0a 81 0a 00 00
-0a 41 0a 00 00 03 8e 00 00 00
-```
+Macro repeat modes:
+- `0x01`: play once
+- `0xFE`: repeat while held
+- `0xFF`: toggle on/off
+- `0x01..0xFD`: repeat count
 
-### Macro bind packet
-Assigns macro index `0x01` to a button (observed for side button 1).
-
-Payload bytes (index 2-15):
-
-```
-00 00 <apply_offset> 04 06 00 01 4E 00 00 00 00 00 00
-```
-
-`0x06` appears to represent a macro action type.
+Some firmware requires the unlock sequence (`0x09`, `0x4D`, `0x01`) before macro writes.
 
 ## DPI Slots
-Five slots are updated using command `0x07`.
-
-Payload bytes (index 2-15):
-
+Five DPI slots live at `offset = 0x0C + (slot * 4)` in page `0x00 + base`:
 ```
-00 00 <slot_offset> 04 <val> <val> 00 <tweak> 00 00 00 00 00 00
+[00, 00, offset, 04, value, value, 00, tweak, 00...]
 ```
 
-`slot_offset` observed as `0x0C + slot_index * 4` (`slot_index` 0..4).
-
-Observed mapping from UI DPI values to `<val>` and `<tweak>`:
-
-| DPI  | val | tweak |
-|------|-----|-------|
-| 1600 | 12  | 31    |
-| 2400 | 1B  | 1F    |
-| 4900 | 3A  | E1    |
-| 8900 | 6A  | 81    |
-| 14100| A8  | 05    |
-
-The exact conversion from DPI to `<val>/<tweak>` is unknown.
+Known mappings:
+| DPI | value | tweak |
+|-----|-------|-------|
+| 1600 | 0x12 | 0x31 |
+| 2400 | 0x1B | 0x1F |
+| 4900 | 0x3A | 0xE1 |
+| 8900 | 0x6A | 0x81 |
+| 14100 | 0xA8 | 0x05 |
 
 ## Polling Rate
-Command `0x07`, payload bytes (index 2-15):
-
+Polling rate is stored at page `0x00 + base`, offset `0x00`:
 ```
-00 00 00 02 <rate_id> <rate_guard> 00 00 00 00 00 00 00 00
+[00, 00, 00, 02, rate_code, rate_guard, 00...]
 ```
 
 Observed values:
-
-| Rate | rate_id | rate_guard |
-|------|---------|------------|
-| 250  | 04      | 51         |
-| 500  | 02      | 53         |
-| 1000 | 01      | 54         |
+| Rate | rate_code | rate_guard |
+|------|-----------|------------|
+| 125 | 0x04 | 0x51 |
+| 250 | 0x02 | 0x53 |
+| 500 | 0x01 | 0x54 |
+| 1000 | 0x00 | 0x55 |
 
 ## RGB / Lighting
-Lighting changes use command `0x07` and appear to have multiple sub-modes.
-
-### Steady (magenta)
+RGB writes use page `0x00 + base`, offset `0x54`, length `0x08`:
 ```
-00 00 54 08 FF 00 FF 57 01 54 3C 19 00 00
+[00, 00, 54, 08, R, G, B, mode, 01, 54, b1, b2, 00, 00]
 ```
 
-### Steady (red, 20%)
-```
-00 00 54 08 FF 00 00 56 01 54 3C 19 00 00
-```
+Mode byte:
+- `0x56`: steady
+- `0x57`: animated (breathing/neon)
 
-### Steady (red, low)
-```
-00 00 54 08 FF 00 00 56 01 54 01 54 00 00
-```
-
-### Steady (red, high)
-```
-00 00 54 08 FF 00 00 56 01 54 FF 56 00 00
-```
-
-### Neon (magenta)
-```
-00 00 54 08 FF 00 FF 57 02 53 3C 19 00 00
-```
-
-### Breathing (magenta)
-```
-00 00 5C 02 03 52 00 00 00 00 00 00 00 00
-```
-
-### Off
-```
-00 00 58 02 00 55 00 00 00 00 00 00 00 00
-```
-
-The meaning of several RGB bytes (guards, brightness fields, and mode flags) is
-still unknown; the above payloads are copied directly from captures.
+Brightness encoding:
+- `b1 = max(1, min(255, brightness_percent * 3))`
+- `b2 = (0x55 - b1) & 0xFF`
