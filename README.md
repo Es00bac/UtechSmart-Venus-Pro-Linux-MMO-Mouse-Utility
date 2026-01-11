@@ -38,8 +38,8 @@ The utility is written in Python and uses PyQt6 for the interface.
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/Es00bac/VenusProLinux.git
-   cd VenusProLinux
+   git clone https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility.git
+   cd UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
    ```
 
 2. **Install dependencies:**
