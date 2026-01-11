@@ -7,3 +7,5 @@ __pycache__/
 .idea/
 *.swp
 *.bak
+CLAUDE.md
+AGENTS.md

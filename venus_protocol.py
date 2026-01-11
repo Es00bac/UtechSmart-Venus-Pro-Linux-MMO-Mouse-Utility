@@ -192,11 +192,11 @@ POLLING_RATE_PAYLOADS = {
 
 
 DPI_PRESETS = {
-    1600: {"value": 0x12, "tweak": 0x31},
-    2400: {"value": 0x1B, "tweak": 0x1F},
-    4900: {"value": 0x3A, "tweak": 0xE1},
-    8900: {"value": 0x6A, "tweak": 0x81},
-    14100: {"value": 0xA8, "tweak": 0x05},
+    1000: {"value": 0x0B, "tweak": 0x3F},
+    2000: {"value": 0x17, "tweak": 0x27},
+    4000: {"value": 0x2F, "tweak": 0xF7},
+    8000: {"value": 0x5F, "tweak": 0x97},
+    10000: {"value": 0xBD, "tweak": 0xDB},
 }
 
 DPI_VALUE_POINTS = sorted((dpi, info["value"]) for dpi, info in DPI_PRESETS.items())

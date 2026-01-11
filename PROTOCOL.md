@@ -51,6 +51,9 @@ Flash is 256 pages x 256 bytes. Write/read payloads use:
 [0x00, page, offset, length, data...]
 ```
 
+For `0x07` writes, `length` is typically <= 0x0A (10 bytes); larger writes are
+sent as multiple packets.
+
 Profiles are page-base offsets:
 - Profile 1: `0x00`
 - Profile 2: `0x40`
@@ -161,7 +164,7 @@ Five DPI slots live at `offset = 0x0C + (slot * 4)` in page `0x00 + base`:
 [00, 00, offset, 04, value, value, 00, tweak, 00...]
 ```
 
-Known mappings:
+Known mappings used by the current GUI:
 | DPI | value | tweak |
 |-----|-------|-------|
 | 1600 | 0x12 | 0x31 |
@@ -183,6 +186,8 @@ Observed values:
 | 250 | 0x02 | 0x53 |
 | 500 | 0x01 | 0x54 |
 | 1000 | 0x00 | 0x55 |
+
+Note: 125 Hz may vary across firmware; some captures hinted at `rate_code=0x03`.
 
 ## RGB / Lighting
 RGB writes use page `0x00 + base`, offset `0x54`, length `0x08`:

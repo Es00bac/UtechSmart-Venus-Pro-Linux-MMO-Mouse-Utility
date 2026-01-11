@@ -71,7 +71,6 @@ python3 venus_gui.py
 
 ### Tips
 - **Wired & Wireless:** Configuration works in both modes. The app will use the wired connection when present and fall back to the wireless receiver when USB is disconnected.
-- **Wired Mode:** It is highly recommended to perform configuration while the mouse is in **wired mode** to ensure settings are correctly written to the flash memory.
 - **Factory Reset:** If the mouse behaves oddly, the "Advanced" tab contains a Factory Reset button that restores all settings to default (Note: This wipes all custom macros!).
 - **WIP Areas:** DPI, Polling Rate, and RGB controls are still under active reverse-engineering.
 

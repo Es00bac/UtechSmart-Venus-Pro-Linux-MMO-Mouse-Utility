@@ -1091,7 +1091,7 @@ class MainWindow(QtWidgets.QMainWindow):
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
 
-        header = QtWidgets.QLabel("DPI slots (use presets or raw values from captures)")
+        header = QtWidgets.QLabel("DPI slots (presets match factory defaults; custom uses computed values)")
         layout.addWidget(header)
 
         self.dpi_rows: list[tuple[
