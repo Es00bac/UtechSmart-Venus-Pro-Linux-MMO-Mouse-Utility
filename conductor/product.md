@@ -16,6 +16,7 @@ A professional configuration utility for the UtechSmart Venus Pro MMO gaming mou
 *   **Comprehensive Button Remapping:** Visual interface to remap all 16 physical buttons, including the specialized 12-button side panel, with support for keyboard modifiers.
 *   **Advanced Macro Engine:** A dedicated editor to record, refine, and upload macro sequences with precise millisecond timing directly to the device memory.
 *   **Protocol Analysis Suite:** Integrated utilities for real-time USB traffic capture and decoding to assist in ongoing reverse engineering and troubleshooting.
+*   **Operational Robustness:** Real-time detection of device "Busy" states (e.g., capture by VMs or Wine) with built-in reclamation tools to restore host control.
 
 ## Non-Functional Goals
 *   **Operational Safety:** Prioritize high reliability in the protocol implementation to ensure configuration uploads are atomic and safe, preventing device corruption or "bricking."
