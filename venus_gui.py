@@ -2190,10 +2190,11 @@ class MainWindow(QtWidgets.QMainWindow):
         """Attempt to reclaim all Venus devices from other processes."""
         self._log("USB: Attempting to reclaim Venus devices from other processes...")
         found = False
-        for pid in vp.PRODUCT_IDS:
-            if vp.reclaim_device(vp.VENDOR_ID, pid):
-                self._log(f"USB: Reclaim attempt sent to PID 0x{pid:04X}")
-                found = True
+        for vid in vp.VENDOR_IDS:
+            for pid in vp.PRODUCT_IDS:
+                if vp.reclaim_device(vid, pid):
+                    self._log(f"USB: Reclaim attempt sent to {vid:04X}:{pid:04X}")
+                    found = True
         
         if found:
             self._log("USB: Reclaim sequence complete. Refreshing...")
