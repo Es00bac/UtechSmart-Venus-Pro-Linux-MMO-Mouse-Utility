@@ -24,5 +24,5 @@ Goal: Update the PyQt6 interface to support the new staged workflow.
 Goal: Ensure high reliability and finalize the user experience.
 
 - [x] Task: Write Tests for Error Recovery (Verify that interrupted batch writes can be recovered or safely aborted) e2ed440
-- [ ] Task: Final UX Pass (Polish button labels, tooltips, and overall flow for the staged remapping)
+- [x] Task: Final UX Pass (Polish button labels, tooltips, and overall flow for the staged remapping) e49c458
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Robustness' (Protocol in workflow.md)
