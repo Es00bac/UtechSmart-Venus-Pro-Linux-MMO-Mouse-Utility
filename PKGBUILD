@@ -14,6 +14,8 @@ package() {
   cd "${srcdir}/VenusProLinux"
   install -Dm755 venus_gui.py "${pkgdir}/usr/share/venusprolinux/venus_gui.py"
   install -Dm644 venus_protocol.py "${pkgdir}/usr/share/venusprolinux/venus_protocol.py"
+  install -Dm644 staging_manager.py "${pkgdir}/usr/share/venusprolinux/staging_manager.py"
+  install -Dm644 transaction_controller.py "${pkgdir}/usr/share/venusprolinux/transaction_controller.py"
   install -Dm644 mouseimg.png "${pkgdir}/usr/share/venusprolinux/mouseimg.png"
   install -Dm644 PROTOCOL.md "${pkgdir}/usr/share/doc/venusprolinux/PROTOCOL.md"
   install -Dm644 README.md "${pkgdir}/usr/share/doc/venusprolinux/README.md"
