@@ -31,5 +31,8 @@ sudo chmod 755 /usr/bin/venusprolinux
 # Update icon cache
 sudo gtk-update-icon-cache -f /usr/share/icons/hicolor/ 2>/dev/null || true
 
-echo "Installation complete!"
-echo "You can now run 'venusprolinux' or find 'Venus Pro Config' in your app menu."
+echo "Note: You may need to setup udev rules for non-root access:"
+echo 'echo "SUBSYSTEM==\"usb\", ATTRS{idVendor}==\"25a7\", ATTRS{idProduct}==\"fa07\", MODE=\"0666\"" | sudo tee /etc/udev/rules.d/99-venus-pro.rules'
+echo 'echo "SUBSYSTEM==\"usb\", ATTRS{idVendor}==\"25a7\", ATTRS{idProduct}==\"fa08\", MODE=\"0666\"" | sudo tee -a /etc/udev/rules.d/99-venus-pro.rules'
+echo 'echo "SUBSYSTEM==\"usb\", ATTRS{idVendor}==\"04d9\", ATTRS{idProduct}==\"fc55\", MODE=\"0666\"" | sudo tee -a /etc/udev/rules.d/99-venus-pro.rules'
+echo 'sudo udevadm control --reload-rules && sudo udevadm trigger'

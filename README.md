@@ -99,6 +99,7 @@ yay -S venusprolinux-git
    ```bash
    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", MODE="0666"' | sudo tee /etc/udev/rules.d/99-venus-pro.rules
    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa08", MODE="0666"' | sudo tee -a /etc/udev/rules.d/99-venus-pro.rules
+   echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="04d9", ATTRS{idProduct}=="fc55", MODE="0666"' | sudo tee -a /etc/udev/rules.d/99-venus-pro.rules
    sudo udevadm control --reload-rules && sudo udevadm trigger
    ```
 

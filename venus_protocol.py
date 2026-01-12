@@ -76,11 +76,24 @@ def is_device_busy(vendor_id: int, product_id: int) -> bool:
     except:
         return True # Assume busy if we can't even check
 
+def try_unlock_device() -> bool:
+    """Attempts to unlock the device by sending magic packets via pyusb.
+    
+    This is required if the device is in a weird state or not accepting commands.
+    """
+    if not PYUSB_AVAILABLE:
+        print("Unlock: python-pyusb not installed.")
+        return False
 
     print("Attempting to unlock device...")
-    dev = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_IDS[1]) # FA08 Wireless
-    if dev is None:
-        dev = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_IDS[0]) # FA07 Wired
+    dev = None
+    for vid in VENDOR_IDS:
+        for pid in PRODUCT_IDS:
+            dev = usb.core.find(idVendor=vid, idProduct=pid)
+            if dev is not None:
+                break
+        if dev is not None:
+            break
     
     if dev is None:
         print("Unlock: No device found.")
@@ -137,8 +150,14 @@ def is_device_busy(vendor_id: int, product_id: int) -> bool:
     return True
 
 
-VENDOR_ID = 0x25A7
-PRODUCT_IDS = (0xFA07, 0xFA08)
+VENDOR_IDS = (0x25A7, 0x04D9)
+PRODUCT_IDS = (0xFA07, 0xFA08, 0xFC55)
+# Map for friendly names
+DEVICE_NAMES = {
+    (0x25A7, 0xFA07): "Venus Pro (Wireless)",
+    (0x25A7, 0xFA08): "Venus Pro (Wired)",
+    (0x04D9, 0xFC55): "Venus MMO (Wired)",
+}
 
 REPORT_ID = 0x08
 REPORT_LEN = 17
@@ -1037,8 +1056,50 @@ def _device_sort_key(info: DeviceInfo) -> tuple[int, int, str]:
 
 def list_devices(exclude_receivers: bool = False) -> list[DeviceInfo]:
     devices = []
+    found = []
+    # First, try to open devices directly by VID/PID.
+    # This is necessary for some systems (e.g., macOS) where hid.enumerate()
+    # might not return all necessary details or might fail for certain devices.
+    for vid in VENDOR_IDS:
+        for pid in PRODUCT_IDS:
+            try:
+                # Open with path=None to find first matching device
+                h = hid.device()
+                h.open(vid, pid)
+                # If success, we found one
+                found.append({
+                    'vendor_id': vid,
+                    'product_id': pid,
+                    'path': b"Unknown (hidapi open)",  # hidapi.device() obj doesn't expose path easily after open
+                    'interface_number': -1
+                })
+                h.close()
+            except IOError:
+                continue
+            except Exception:
+                continue
+    
+    # Also try enumeration to get more details if possible
+    try:
+        for vid in VENDOR_IDS:
+            devs = hid.enumerate(vid, 0)
+            for d in devs:
+                if d['product_id'] in PRODUCT_IDS:
+                     # Check if already found by open check (deduplicate loosely)
+                    already = False
+                    for f in found:
+                        if f['vendor_id'] == d['vendor_id'] and f['product_id'] == d['product_id']:
+                             f['path'] = d['path']
+                             f['interface_number'] = d['interface_number']
+                             already = True
+                             break
+                    if not already:
+                        found.append(d)
+    except:
+        pass
+
     seen_paths = set()
-    for item in hid.enumerate(VENDOR_ID, 0):
+    for item in found: # Iterate through the combined list of found devices
         if item["product_id"] not in PRODUCT_IDS:
             continue
         
