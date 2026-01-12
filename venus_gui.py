@@ -1041,24 +1041,38 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_rgb_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
-        layout = QtWidgets.QFormLayout(widget)
+        layout = QtWidgets.QVBoxLayout(widget)
 
-        # Preset selector (quick options)
-        self.rgb_select = QtWidgets.QComboBox()
-        self.rgb_select.addItems(vp.RGB_PRESETS.keys())
+        # --- Quick Pick Grid ---
+        quick_pick_group = QtWidgets.QGroupBox("Quick Pick Colors")
+        grid_layout = QtWidgets.QGridLayout(quick_pick_group)
+        grid_layout.setSpacing(4)
+        
+        row, col = 0, 0
+        for r, g, b in vp.RGB_QUICK_PICKS:
+            color = QtGui.QColor(r, g, b)
+            btn = QtWidgets.QPushButton()
+            btn.setFixedSize(24, 24)
+            btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
+            btn.setToolTip(f"RGB: {r}, {g}, {b}")
+            
+            # Connect using closure to capture current color
+            btn.clicked.connect(lambda _, c=color: self._set_custom_color(c))
+            
+            grid_layout.addWidget(btn, row, col)
+            col += 1
+            if col >= 9:
+                col = 0
+                row += 1
+        
+        layout.addWidget(quick_pick_group)
 
-        apply_preset_button = QtWidgets.QPushButton("Apply Preset")
-        apply_preset_button.clicked.connect(self._apply_rgb_preset)
-
-        layout.addRow("Presets:", self.rgb_select)
-        layout.addRow("", apply_preset_button)
-
-        # Separator
-        layout.addRow(QtWidgets.QLabel(""))
-        layout.addRow(QtWidgets.QLabel("Custom Color:"))
+        # Custom controls in a form
+        form_widget = QtWidgets.QWidget()
+        form_layout = QtWidgets.QFormLayout(form_widget)
 
         # Color picker
-        self.rgb_color_button = QtWidgets.QPushButton("Pick Color")
+        self.rgb_color_button = QtWidgets.QPushButton("Pick Custom Color")
         self.rgb_color_button.setStyleSheet("background-color: #FF00FF; color: white; font-weight: bold;")
         self.rgb_color_button.clicked.connect(self._pick_rgb_color)
         self.rgb_current_color = QtGui.QColor(255, 0, 255)  # Default magenta
@@ -1083,15 +1097,29 @@ class MainWindow(QtWidgets.QMainWindow):
         brightness_layout.addWidget(self.rgb_brightness, stretch=1)
         brightness_layout.addWidget(self.rgb_brightness_label)
 
-        apply_custom_button = QtWidgets.QPushButton("Apply Custom")
+        apply_custom_button = QtWidgets.QPushButton("Apply Lighting")
+        apply_custom_button.setStyleSheet("font-weight: bold; padding: 8px; background-color: #444;")
         apply_custom_button.clicked.connect(self._apply_rgb_custom)
 
-        layout.addRow("Color:", self.rgb_color_button)
-        layout.addRow("Mode:", self.rgb_mode)
-        layout.addRow("Brightness:", brightness_layout)
-        layout.addRow("", apply_custom_button)
+        form_layout.addRow("Color:", self.rgb_color_button)
+        form_layout.addRow("Mode:", self.rgb_mode)
+        form_layout.addRow("Brightness:", brightness_layout)
+        form_layout.addRow("", apply_custom_button)
+        
+        layout.addWidget(form_widget)
+        layout.addStretch()
         
         return widget
+
+    def _set_custom_color(self, color: QtGui.QColor) -> None:
+        """Set the current color from a preset."""
+        self.rgb_current_color = color
+        self.rgb_color_button.setStyleSheet(
+            f"background-color: {color.name()}; color: {'white' if color.lightness() < 128 else 'black'}; font-weight: bold;"
+        )
+        # Optionally auto-apply?
+        # self._apply_rgb_custom()
+
 
     def _pick_rgb_color(self) -> None:
         color = QtWidgets.QColorDialog.getColor(self.rgb_current_color, self, "Pick LED Color")
