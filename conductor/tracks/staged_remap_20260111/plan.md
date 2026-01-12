@@ -16,7 +16,7 @@ Goal: Update the PyQt6 interface to support the new staged workflow.
 
 - [x] Task: Write UI Tests for Staging Visuals (Verify "Apply" button state and visual cues for staged changes) 13b02e8
 - [x] Task: Update Button Mapping Tab (Modify slots to stage changes instead of applying immediately) ea14837
-- [ ] Task: Implement "Apply" and "Discard" UI Elements (Add buttons and link them to the transaction controller)
+- [x] Task: Implement "Apply" and "Discard" UI Elements (Add buttons and link them to the transaction controller) 6d37f1c
 - [ ] Task: Integrate Transaction Logging into UI (Ensure batch results are visible in the expert console)
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: UI Refactor' (Protocol in workflow.md)
 
