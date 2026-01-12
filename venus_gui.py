@@ -15,6 +15,8 @@ except ImportError:
     EVDEV_AVAILABLE = False
 
 import venus_protocol as vp
+from staging_manager import StagingManager
+from transaction_controller import TransactionController
 
 
 KEY_USAGE = {chr(ord("A") + i): 0x04 + i for i in range(26)}
@@ -179,6 +181,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.custom_profiles = {}  # key -> (code_hi, code_lo, apply_offset)
         self.current_edit_key = None
         self.button_assignments = {}
+        
+        # Staging & Transaction
+        self.staging_manager = StagingManager()
+        # Note: device/protocol passed later when needed, or we refactor TransactionController to take them at exec time?
+        # Current TransactionController takes them at init. 
+        # But device path changes. So we might need to instantiate controller on demand or update it.
+        # Let's instantiate controller on demand in _commit_changes for now.
+        
         self._initialize_default_assignments()
 
         # Attempt to unlock device (requires root, but try anyway)
@@ -426,7 +436,6 @@ class MainWindow(QtWidgets.QMainWindow):
         
         self.apply_button = QtWidgets.QPushButton("Apply Binding")
         self.apply_button.setStyleSheet("font-weight: bold; padding: 5px;")
-        self.apply_button.clicked.connect(self._apply_button_binding)
         self.apply_button.clicked.connect(self._apply_button_binding)
         self.editor_layout.addWidget(self.apply_button)
 
@@ -1482,27 +1491,31 @@ class MainWindow(QtWidgets.QMainWindow):
         elif action == "RGB Toggle":
             pass
 
-        # UPDATE STATE
-        self.button_assignments[self.current_edit_key] = {"action": action, "params": params}
+        # STAGE CHANGE
+        self.staging_manager.stage_change(self.current_edit_key, action, params)
         
-        # UI FEEDBACK (Pending)
+        # UPDATE UI
+        self._update_staged_visuals()
+        
+    def _update_staged_visuals(self) -> None:
+        """Update button list to show staged vs committed state."""
+        staged = self.staging_manager.get_staged_changes()
+        
         for row in range(self.btn_table.rowCount()):
              key = self.btn_table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
-             if key == self.current_edit_key:
-                 self.btn_table.item(row, 1).setText(f"{action} (Syncing...)")
-                 break
-        
-        QtWidgets.QApplication.processEvents()
-        
-        # SYNC
-        self._sync_all_buttons()
-        
-        # UI FEEDBACK (Done)
-        for row in range(self.btn_table.rowCount()):
-             key = self.btn_table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
-             if key == self.current_edit_key:
-                 self.btn_table.item(row, 1).setText(action)
-                 break
+             item_assign = self.btn_table.item(row, 1)
+             
+             if key in staged:
+                 action = staged[key]["action"]
+                 item_assign.setText(f"{action} *")
+                 item_assign.setForeground(QtGui.QBrush(QtGui.QColor("orange")))
+             elif key in self.button_assignments:
+                 action = self.button_assignments[key]["action"]
+                 item_assign.setText(action)
+                 item_assign.setForeground(QtGui.QBrush(QtGui.QColor("white"))) # Default text color (or standard palette)
+             else:
+                 item_assign.setText("Unknown")
+                 item_assign.setForeground(QtGui.QBrush(QtGui.QColor("gray")))
 
 
     def _upload_macro(self) -> None:
