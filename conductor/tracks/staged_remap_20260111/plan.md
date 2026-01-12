@@ -11,14 +11,14 @@ Goal: Implement the backend data structures and logic to support staging changes
 - [x] Task: Implement Atomic Transaction Controller (Logic to iterate and apply staged changes with verification) 5f6c101
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Core Logic' (Protocol in workflow.md) 6fb603b
 
-## Phase 2: UI Refactor & Integration
+## Phase 2: UI Refactor & Integration [checkpoint: b2bc600]
 Goal: Update the PyQt6 interface to support the new staged workflow.
 
 - [x] Task: Write UI Tests for Staging Visuals (Verify "Apply" button state and visual cues for staged changes) 13b02e8
 - [x] Task: Update Button Mapping Tab (Modify slots to stage changes instead of applying immediately) ea14837
 - [x] Task: Implement "Apply" and "Discard" UI Elements (Add buttons and link them to the transaction controller) 6d37f1c
 - [x] Task: Integrate Transaction Logging into UI (Ensure batch results are visible in the expert console) 1f4dcd2
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: UI Refactor' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: UI Refactor' (Protocol in workflow.md) b2bc600
 
 ## Phase 3: Robustness & Final Polish
 Goal: Ensure high reliability and finalize the user experience.
