@@ -195,9 +195,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # Attempt to unlock device (requires root, but try anyway)
         # This will freeze mouse momentarily
         if vp.PYUSB_AVAILABLE:
-            print("Running Startup Unlock...")
-            vp.unlock_device()
+            self._log("Init: Attempting Startup Unlock (PyUSB)...")
+            try:
+                vp.unlock_device()
+                self._log("Init: Unlock command sent.")
+            except Exception as e:
+                self._log(f"Init: Unlock failed: {e}")
 
+        self._log("Init: Refreshing and connecting...")
         self._refresh_and_connect()
 
 
@@ -1316,15 +1321,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_and_connect(self) -> None:
         """Refresh devices and store path for transient connections."""
+        self._log("Connect: Refreshing device list...")
         self._refresh_devices()
         if self.device_infos:
             info = self.device_infos[0]
             self.device_path = info.path
             self.status_label.setText(f"Ready: {info.product}")
-            self._log(f"Found device: {info.product}")
+            self._log(f"Connect: Found device: {info.product} at {info.path}")
             # Auto-read settings on startup
+            self._log("Connect: Triggering auto-read settings...")
             self._read_settings()
         else:
+            self._log("Connect: No devices found.")
             self.status_label.setText("No device found")
 
     def _auto_connect(self) -> None:
