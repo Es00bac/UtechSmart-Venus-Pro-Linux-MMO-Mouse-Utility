@@ -14,7 +14,7 @@ Goal: Implement the backend data structures and logic to support staging changes
 ## Phase 2: UI Refactor & Integration
 Goal: Update the PyQt6 interface to support the new staged workflow.
 
-- [ ] Task: Write UI Tests for Staging Visuals (Verify "Apply" button state and visual cues for staged changes)
+- [x] Task: Write UI Tests for Staging Visuals (Verify "Apply" button state and visual cues for staged changes) 13b02e8
 - [ ] Task: Update Button Mapping Tab (Modify slots to stage changes instead of applying immediately)
 - [ ] Task: Implement "Apply" and "Discard" UI Elements (Add buttons and link them to the transaction controller)
 - [ ] Task: Integrate Transaction Logging into UI (Ensure batch results are visible in the expert console)
