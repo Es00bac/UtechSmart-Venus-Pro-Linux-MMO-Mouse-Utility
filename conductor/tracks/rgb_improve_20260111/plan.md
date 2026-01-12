@@ -10,13 +10,13 @@ Goal: Extract the exact RGB command structure and color formula from packet capt
 - [x] Task: Update `PROTOCOL.md` (Document the refined RGB packet structure and the 27 preset values)
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Analysis' (Protocol in workflow.md) c5f7328
 
-## Phase 2: Protocol Implementation (TDD)
+## Phase 2: Protocol Implementation (TDD) [checkpoint: 1a27522]
 Goal: Update the core protocol library to support the new RGB logic.
 
 - [x] Task: Write Tests for RGB Packet Building (Define expected bytes for known presets and arbitrary colors) 86481ec
-- [ ] Task: Refactor `venus_protocol.py` RGB Logic (Implement the `build_rgb` function using the discovered formula)
-- [ ] Task: Verify Protocol Tests (Ensure all RGB packet tests pass with high coverage)
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Protocol' (Protocol in workflow.md)
+- [x] Task: Refactor `venus_protocol.py` RGB Logic (Implement the `build_rgb` function using the discovered formula)
+- [x] Task: Verify Protocol Tests (Ensure all RGB packet tests pass with high coverage)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Protocol' (Protocol in workflow.md) 1a27522
 
 ## Phase 3: GUI Refactor (TDD)
 Goal: Enhance the RGB tab with a preset grid and accurate color picker.
