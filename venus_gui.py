@@ -1570,7 +1570,7 @@ class MainWindow(QtWidgets.QMainWindow):
             device.open()
             
             builder = PacketBuilder(self)
-            controller = TransactionController(device, builder)
+            controller = TransactionController(device, builder, logger=self._log)
             
             # Progress dialog
             progress = QtWidgets.QProgressDialog("Applying changes...", "Cancel", 0, 0, self)
