@@ -73,7 +73,7 @@ The utility is written in Python and uses PyQt6 for the interface.
 
 ### Arch Linux (AUR)
 ```bash
-yay -S venusprolinux
+yay -S venusprolinux-git
 ```
 
 ### Manual Installation
