@@ -22,7 +22,7 @@ Goal: Update the core protocol library to support the new RGB logic.
 Goal: Enhance the RGB tab with a preset grid and accurate color picker.
 
 - [x] Task: Write UI Tests for RGB Tab (Verify preset grid population and color picker signal handling) c3526a8
-- [~] Task: Implement Preset Grid (Add a grid of 27 swatches to the RGB tab for quick access)
-- [ ] Task: Update Color Picker Integration (Connect the native color picker to the refined protocol logic)
+- [x] Task: Implement Preset Grid (Add a grid of 27 swatches to the RGB tab for quick access) 7682f85
+- [~] Task: Update Color Picker Integration (Connect the native color picker to the refined protocol logic)
 - [ ] Task: Final UX Polish (Ensure tooltips and labels accurately reflect the new capabilities)
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: GUI Refactor' (Protocol in workflow.md)
