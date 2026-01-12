@@ -2,14 +2,14 @@
 
 This plan outlines the steps to refactor the button remapping workflow to support staged batch application and atomic transactions.
 
-## Phase 1: Core Logic & Staging Mechanism
+## Phase 1: Core Logic & Staging Mechanism [checkpoint: 6fb603b]
 Goal: Implement the backend data structures and logic to support staging changes without immediate device writes.
 
 - [x] Task: Write Tests for Staging Data Structure (Define expected behavior for adding, removing, and clearing staged bindings) <!-- id: 0 --> 38a7c2e
 - [x] Task: Implement Staging Area Logic (Add data structures to track pending changes in the UI state) a5f09ae
 - [x] Task: Write Tests for Atomic Transaction Logic (Define expected behavior for successful and failed batch applications) b809482
 - [x] Task: Implement Atomic Transaction Controller (Logic to iterate and apply staged changes with verification) 5f6c101
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Core Logic' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Core Logic' (Protocol in workflow.md) 6fb603b
 
 ## Phase 2: UI Refactor & Integration
 Goal: Update the PyQt6 interface to support the new staged workflow.
