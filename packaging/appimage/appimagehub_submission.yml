@@ -1,0 +1,26 @@
+# AppImageHub Submission YAML
+# To submit your AppImage to AppImageHub:
+# 1. Fork https://github.com/AppImage/appimage.github.io
+# 2. Create a new file 'data/VenusProLinux.yml' with the content below.
+# 3. Create a Pull Request.
+
+name: Venus Pro Config
+description: Configuration utility for UtechSmart Venus Pro MMO Mouse
+categories:
+  - Settings
+  - Utility
+authors:
+  - name: Es00bac
+    url: https://github.com/Es00bac
+license: MIT
+links:
+  - type: GitHub
+    url: Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
+  - type: Download
+    url: https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/raw/main/packaging/appimage/VenusProLinux-1.0.0-x86_64.AppImage
+icons:
+  - https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/icon.png
+screenshots:
+  - https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/Buttons.png
+  - https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/RGB.png
+  - https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/Macros.png
