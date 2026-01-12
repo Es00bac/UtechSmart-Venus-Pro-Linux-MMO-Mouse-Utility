@@ -190,15 +190,28 @@ Observed values:
 Note: 125 Hz may vary across firmware; some captures hinted at `rate_code=0x03`.
 
 ## RGB / Lighting
-RGB writes use page `0x00 + base`, offset `0x54`, length `0x08`:
+RGB writes use page `0x00 + base`, offset `0x54`, length `0x08`.
+Note: The previously identified "Mode" byte at offset 9 is actually a checksum for the color components.
+
 ```
-[00, 00, 54, 08, R, G, B, mode, 01, 54, b1, b2, 00, 00]
+[00, 00, 54, 08, R, G, B, ColorChk, Mode, 54, b1, b2, 00, 00]
 ```
 
-Mode byte:
-- `0x56`: steady
-- `0x57`: animated (breathing/neon)
+**Color Checksum:**
+To ensure the color is accepted, `ColorChk` must satisfy:
+```
+(R + G + B + ColorChk) & 0xFF == 0x55
+```
+Or:
+```
+ColorChk = (0x55 - (R + G + B)) & 0xFF
+```
 
-Brightness encoding:
+**Mode Byte (Offset 10):**
+- `0x01`: Steady (Observed in captures)
+- `0x02`?: Breathing (Hypothesized, needs verification)
+- `0x03`?: Neon (Hypothesized)
+
+**Brightness:**
 - `b1 = max(1, min(255, brightness_percent * 3))`
 - `b2 = (0x55 - b1) & 0xFF`
