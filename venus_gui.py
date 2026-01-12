@@ -1423,8 +1423,8 @@ class MainWindow(QtWidgets.QMainWindow):
         wireless_on_bus = False
         if vp.PYUSB_AVAILABLE:
             import usb.core
-            wired_on_bus = usb.core.find(idVendor=vp.VENDOR_ID, idProduct=vp.PRODUCT_IDS[1]) is not None
-            wireless_on_bus = usb.core.find(idVendor=vp.VENDOR_ID, idProduct=vp.PRODUCT_IDS[0]) is not None
+            wired_on_bus = usb.core.find(idVendor=vp.VENDOR_IDS[0], idProduct=vp.PRODUCT_IDS[1]) is not None
+            wireless_on_bus = usb.core.find(idVendor=vp.VENDOR_IDS[0], idProduct=vp.PRODUCT_IDS[0]) is not None
 
         # Check if wired mouse is missing from hidapi but present on bus
         wired_found = any(d.product_id == vp.PRODUCT_IDS[1] for d in self.device_infos)
