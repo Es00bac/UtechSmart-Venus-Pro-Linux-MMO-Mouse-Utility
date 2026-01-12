@@ -172,11 +172,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         left_panel.addWidget(self._build_connection_group())
         left_panel.addWidget(self._build_tabs(), stretch=1)
-        left_panel.addWidget(self._build_log())
 
         right_panel.addWidget(self._build_mouse_image())
-        right_panel.addStretch(1)
-        right_panel.addStretch(1)
+        right_panel.addWidget(self._build_log(), stretch=1)
         
         self.custom_profiles = {}  # key -> (code_hi, code_lo, apply_offset)
         self.current_edit_key = None

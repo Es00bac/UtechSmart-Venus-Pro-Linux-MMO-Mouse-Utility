@@ -1,8 +1,8 @@
 pkgbase = venusprolinux-git
 	pkgdesc = Linux configuration utility for the UtechSmart Venus Pro MMO mouse
-	pkgver = r7.c2f7af3
+	pkgver = 0.0.0
 	pkgrel = 1
-	url = https://github.com/Es00bac/VenusProLinux
+	url = https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
 	arch = any
 	license = MIT
 	makedepends = git
@@ -13,7 +13,9 @@ pkgbase = venusprolinux-git
 	optdepends = python-pyusb: magic unlock helper
 	provides = venusprolinux
 	conflicts = venusprolinux
-	source = git+https://github.com/Es00bac/VenusProLinux.git
+	source = git+https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility.git
+	source = 99-venus-pro.rules
+	sha256sums = SKIP
 	sha256sums = SKIP
 
 pkgname = venusprolinux-git
