@@ -154,6 +154,16 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Venus Pro Config v0.2.1 (Reverse Engineering)")
         self.resize(1200, 780)
+        
+        # Set Application Icon
+        icon_path = Path(__file__).parent / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QtGui.QIcon(str(icon_path)))
+        
+        # Identity for Taskbar
+        app = QtWidgets.QApplication.instance()
+        if app:
+            app.setDesktopFileName("venusprolinux.desktop")
 
         # Store device path instead of keeping device open (prevents blocking mouse input)
         self.device_path: str | None = None
