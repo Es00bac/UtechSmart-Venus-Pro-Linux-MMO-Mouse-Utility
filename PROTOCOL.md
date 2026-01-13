@@ -5,15 +5,19 @@ from captures and the current `venus_protocol.py` implementation. Wired and wire
 mode share the same configuration format and commands.
 
 ## Device IDs and Interfaces
-- Vendor ID: `0x25A7`
-- Product IDs:
-  - `0xFA08` = 2.4G Dual Mode Mouse (wired connection)
-  - `0xFA07` = 2.4G Wireless Receiver (wireless dongle)
+
+- **Vendor IDs**: `0x25A7`, `0x04D9`
+- **Product IDs**:
+  - `0xFA07` = Venus Pro Wireless Receiver (2.4GHz dongle)
+  - `0xFA08` = Venus Pro Wired (dual mode mouse via USB)
+  - `0xFC55` = Venus MMO Wired
+
 - Configuration is sent as HID **Feature Reports** on the vendor interface.
-  - Interface `1` is the config interface on most firmware.
-  - Interface `0` is accepted on some firmware; the code will use either.
+  - Interface `1` is the preferred config interface.
+  - Interface `0` is accepted on some firmware; the code will try both.
 
 ## Report Format
+
 All configuration packets are 17 bytes:
 
 ```
@@ -23,50 +27,50 @@ Byte 2-15 : Payload (14 bytes)
 Byte 16 : Checksum
 ```
 
-Checksum (sum of bytes 0..15 must equal 0x55):
-```
-checksum = (0x55 - sum(bytes[0..15])) & 0xFF
+Checksum calculation (sum of bytes 0..15 must equal 0x55):
+```python
+checksum = (0x55 - sum(bytes[0:16])) & 0xFF
 ```
 
 Responses arrive as Report ID `0x09`, echoing the command. For reads (`0x08`),
 the response payload includes `[page][offset][len][data...]`.
 
 ## Command Summary
-- `0x03`: Handshake / ready
-- `0x04`: Prepare / commit (sent before and after write sequences)
-- `0x07`: Write flash (page/offset addressing)
-- `0x08`: Read flash
-- `0x09`: Reset to defaults
-- `0x4D`, `0x01`: Magic unlock sequence for macro/page-3 writes (used by `unlock()`)
+
+| Cmd | Description |
+|-----|-------------|
+| `0x03` | Handshake / ready |
+| `0x04` | Prepare / commit (sent before and after write sequences) |
+| `0x07` | Write flash (page/offset addressing) |
+| `0x08` | Read flash |
+| `0x09` | Reset to defaults |
+| `0x4D`, `0x01` | Magic unlock sequence for macro/page-3 writes |
 
 Typical write flow:
-1. `0x04` (prepare)
-2. `0x03` (handshake)
-3. One or more `0x07` writes
-4. `0x04` (commit)
+1. `0x03` (handshake)
+2. One or more `0x07` writes
+3. `0x04` (commit)
 
 ## Addressing and Profiles
-Flash is 256 pages x 256 bytes. Write/read payloads use:
+
+Flash is 256 pages × 256 bytes. Write/read payloads use:
 ```
 [0x00, page, offset, length, data...]
 ```
 
-For `0x07` writes, `length` is typically <= 0x0A (10 bytes); larger writes are
-sent as multiple packets.
+For `0x07` writes, `length` is typically ≤ 10 bytes; larger writes require multiple packets.
 
-Profiles are page-base offsets:
+**Profile Base Offsets** (add to page number for profile-specific data):
 - Profile 1: `0x00`
 - Profile 2: `0x40`
 - Profile 3: `0x80`
 - Profile 4: `0xC0`
 
-When writing profile-specific data, add the base to the page number (e.g., keyboard
-page `0x01` becomes `0x41` for Profile 2).
-
 ## Button Map
+
 Each button has:
-- a **keyboard definition slot** (`code_hi` page, `code_lo` offset)
-- an **apply slot** (`apply_offset`) in Page 0x00 + profile base
+- **Keyboard definition slot**: `code_hi` (page), `code_lo` (offset within page)
+- **Apply slot**: `apply_offset` in Page `0x00 + profile_base`
 
 | Button | Label | code_hi | code_lo | apply_offset |
 |--------|-------|---------|---------|--------------|
@@ -83,135 +87,171 @@ Each button has:
 | 11 | Side Button 11 | 0x02 | 0xC0 | 0x98 |
 | 12 | Side Button 12 | 0x02 | 0xE0 | 0x9C |
 | 13 | Fire Key | 0x02 | 0x60 | 0x8C |
-| 14 | Left Click | 0x01 | 0xE0 | 0x7C |
-| 15 | Middle Click | 0x02 | 0x40 | 0x88 |
-| 16 | Right Click | 0x01 | 0xC0 | 0x78 |
+| 14 | Left Mouse Button | 0x01 | 0xE0 | 0x7C |
+| 15 | Middle Mouse Button | 0x02 | 0x40 | 0x88 |
+| 16 | Right Mouse Button | 0x01 | 0xC0 | 0x78 |
 
-## Apply Slot Format (Bindings)
-Bindings are 4-byte entries written at the `apply_offset` in page `0x00 + base`:
-```
-[00, page, offset, 04, type, d1, d2, d3, 00...]
-```
+## Button Type Codes
 
-Action types (d3 = `0x55 - (type + d1 + d2)` when noted):
-- `0x00`: Disabled (d3 = `0x55`)
-- `0x01`: Mouse button
-  - d1 = button mask (`0x01` left, `0x02` right, `0x04` middle, `0x08` back, `0x10` forward)
-  - forward/back captures show d3 = `0x44` / `0x4C` respectively
-- `0x02`: DPI control (d1 selects function, d3 = 0x50)
-- `0x04`: Special (Fire/Triple) (d1 = delay ms, d2 = repeat count, d3 computed)
-- `0x05`: Keyboard (binds to key definition slot, d3 computed)
-- `0x06`: Macro (d1 = macro index, d2 = repeat mode, d3 computed)
-- `0x07`: Poll rate toggle (d3 computed)
-- `0x08`: RGB toggle (d3 computed)
+| Type | Value | Description |
+|------|-------|-------------|
+| Disabled | `0x00` | Button does nothing |
+| Mouse | `0x01` | Mouse button (d1 = button mask) |
+| DPI Legacy | `0x02` | DPI control |
+| Special | `0x04` | Fire Key / Triple Click (d1 = delay, d2 = repeat) |
+| Keyboard | `0x05` | Standard keyboard key |
+| Macro | `0x06` | Macro (d1 = index, d2 = repeat mode) |
+| Poll Rate Toggle | `0x07` | Toggle polling rate |
+| RGB Toggle | `0x08` | Toggle RGB LED |
+
+**Mouse Button Masks (Type 0x01):**
+- `0x01` = Left Click
+- `0x02` = Right Click
+- `0x04` = Middle Click
+- `0x08` = Back
+- `0x10` = Forward
 
 ## Keyboard Definition Slots
-Keyboard slots are stored at `code_hi + base` / `code_lo` in 0x20-byte blocks.
-The payload starts with a count, followed by event triples, and a guard byte:
 
-Simple key (no modifiers):
+Keyboard slots are stored at `code_hi + profile_base` page, `code_lo` offset, in 0x20-byte blocks.
+
+**Simple key (no modifiers):**
 ```
-count=2
+count = 2
 events: [0x81, key, 0x00] [0x41, key, 0x00]
 guard = (0x91 - (key * 2)) & 0xFF
 ```
 
-Modifier key:
+**Key with modifier:**
 ```
-count=4
+count = 4
 events: [0x80, mod, 0x00] [0x81, key, 0x00] [0x40, mod, 0x00] [0x41, key, 0x00]
 guard = (0x91 - (key * 2) + 0x3A) & 0xFF
 ```
 
+**Modifier Bit Flags:**
+- `0x01` = Ctrl
+- `0x02` = Shift
+- `0x04` = Alt
+- `0x08` = Win/GUI
+
 ## Macro Storage
-Macro slots are 384 bytes each:
-```
-base = 0x300
-slot_addr = base + (index * 0x180)
+
+Macro slots are 384 bytes (0x180) each, starting at page `0x03`:
+```python
+slot_addr = 0x300 + (index * 0x180)
 page = slot_addr >> 8
 offset = slot_addr & 0xFF
 ```
 
-Macro buffer layout:
-- `0x00`: UTF-16LE name length (bytes)
-- `0x01..0x1E`: name bytes
-- `0x1F`: event count
-- `0x20..`: events (5 bytes each)
+**Macro Buffer Layout:**
+| Offset | Size | Description |
+|--------|------|-------------|
+| 0x00 | 1 | Name length (bytes, UTF-16LE) |
+| 0x01-0x1E | 30 | Name bytes (UTF-16LE, ~15 chars) |
+| 0x1F | 1 | Event count |
+| 0x20+ | 5 each | Events |
 
-Event format:
+**Event Format (5 bytes):**
 ```
-[status] [keycode] 00 [delay_hi] [delay_lo]
-status: 0x81 key down, 0x41 key up, 0x80 mod down, 0x40 mod up
+[status] [keycode] [00] [delay_hi] [delay_lo]
 ```
+- `0x81` = Key down
+- `0x41` = Key up
+- `0x80` = Modifier down
+- `0x40` = Modifier up
 
-Terminator (4 bytes) immediately after the last event:
+**Macro Terminator (6 bytes):**
 ```
-[checksum] 00 00 00
-checksum = (~sum(events) - event_count + 0x56) & 0xFF
+[00] [03] [checksum] [00] [00] [00]
 ```
+Checksum: `(~sum(events) - event_count + 0x56) & 0xFF`
 
-Macro repeat modes:
-- `0x01`: play once
-- `0xFE`: repeat while held
-- `0xFF`: toggle on/off
-- `0x01..0xFD`: repeat count
+**Macro Repeat Modes:**
+| Value | Mode |
+|-------|------|
+| `0x01` | Play once |
+| `0x02`-`0xFD` | Repeat N times |
+| `0xFE` | Repeat while held |
+| `0xFF` | Toggle on/off |
 
-Some firmware requires the unlock sequence (`0x09`, `0x4D`, `0x01`) before macro writes.
+## DPI Configuration
 
-## DPI Slots
-Five DPI slots live at `offset = 0x0C + (slot * 4)` in page `0x00 + base`:
-```
-[00, 00, offset, 04, value, value, 00, tweak, 00...]
-```
+DPI uses linear interpolation between known reference points:
 
-Known mappings used by the current GUI:
-| DPI | value | tweak |
+| DPI | Value | Tweak |
 |-----|-------|-------|
-| 1600 | 0x12 | 0x31 |
-| 2400 | 0x1B | 0x1F |
-| 4900 | 0x3A | 0xE1 |
-| 8900 | 0x6A | 0x81 |
-| 14100 | 0xA8 | 0x05 |
+| 1000 | 0x0B | 0x3F |
+| 2000 | 0x17 | 0x27 |
+| 4000 | 0x2F | 0xF7 |
+| 8000 | 0x5F | 0x97 |
+| 10000 | 0xBD | 0xDB |
+
+**Tweak Calculation:**
+```python
+tweak = (0x55 - (value * 2)) & 0xFF
+```
+
+**DPI Slot Addresses:**
+Five slots at page `0x00 + profile_base`, offsets `0x0C`, `0x10`, `0x14`, `0x18`, `0x1C`.
 
 ## Polling Rate
-Polling rate is stored at page `0x00 + base`, offset `0x00`:
-```
-[00, 00, 00, 02, rate_code, rate_guard, 00...]
-```
 
-Observed values:
-| Rate | rate_code | rate_guard |
-|------|-----------|------------|
+Polling rate is stored at page `0x00 + profile_base`, offset `0x00`:
+
+| Rate (Hz) | Code | Guard |
+|-----------|------|-------|
 | 125 | 0x04 | 0x51 |
 | 250 | 0x02 | 0x53 |
 | 500 | 0x01 | 0x54 |
 | 1000 | 0x00 | 0x55 |
 
-Note: 125 Hz may vary across firmware; some captures hinted at `rate_code=0x03`.
+**Packet format:**
+```
+[00, 00, 00, 02, rate_code, rate_guard, 00...]
+```
 
 ## RGB / Lighting
-RGB writes use page `0x00 + base`, offset `0x54`, length `0x08`.
-Note: The previously identified "Mode" byte at offset 9 is actually a checksum for the color components.
 
+RGB uses different packet formats depending on mode:
+
+**Mode Constants:**
+| Mode | Value |
+|------|-------|
+| Off | `0x00` |
+| Steady | `0x01` |
+| Neon | `0x02` |
+| Breathing | `0x03` |
+
+**Steady/Neon (offset 0x54):**
 ```
-[00, 00, 54, 08, R, G, B, ColorChk, Mode, 54, b1, b2, 00, 00]
+[00, 00, 54, 08, R, G, B, ColorChk, Mode, 54, B1, B2, 00, 00]
+```
+- `ColorChk = (0x55 - (R + G + B)) & 0xFF`
+- `B1 = brightness * 3` (capped 1-255)
+- `B2 = (0x55 - B1) & 0xFF`
+- Mode: `0x01` for Steady, `0x02` for Neon
+
+**Breathing (offset 0x5C):**
+```
+[00, 00, 5C, 02, 03, 52, 00, 00, 00, 00, 00, 00, 00, 00]
+```
+(Fixed format, cycles through colors)
+
+**Off (offset 0x58):**
+```
+[00, 00, 58, 02, 00, 55, 00, 00, 00, 00, 00, 00, 00, 00]
 ```
 
-**Color Checksum:**
-To ensure the color is accepted, `ColorChk` must satisfy:
-```
-(R + G + B + ColorChk) & 0xFF == 0x55
-```
-Or:
-```
-ColorChk = (0x55 - (R + G + B)) & 0xFF
-```
+## Media Key Codes
 
-**Mode Byte (Offset 10):**
-- `0x01`: Steady (Observed in captures)
-- `0x02`?: Breathing (Hypothesized, needs verification)
-- `0x03`?: Neon (Hypothesized)
+Media keys use USB HID Consumer Page codes:
 
-**Brightness:**
-- `b1 = max(1, min(255, brightness_percent * 3))`
-- `b2 = (0x55 - b1) & 0xFF`
+| Function | Code |
+|----------|------|
+| Play/Pause | 0xCD |
+| Next Track | 0xB5 |
+| Prev Track | 0xB6 |
+| Mute | 0xE2 |
+| Volume Up | 0xE9 |
+| Volume Down | 0xEA |
