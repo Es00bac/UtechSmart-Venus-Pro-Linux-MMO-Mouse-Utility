@@ -321,6 +321,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_table.itemSelectionChanged.connect(self._on_btn_table_select)
         left_layout.addWidget(self.btn_table)
         
+        # --- Binding Feedback Panel ---
+        feedback_group = QtWidgets.QGroupBox("Binding Preview")
+        feedback_group.setStyleSheet("QGroupBox { font-weight: bold; padding-top: 10px; }")
+        feedback_layout = QtWidgets.QHBoxLayout(feedback_group)
+        feedback_layout.setContentsMargins(10, 5, 10, 5)
+        
+        self.feedback_button_label = QtWidgets.QLabel("Button: -")
+        self.feedback_button_label.setStyleSheet("font-size: 12px;")
+        self.feedback_action_label = QtWidgets.QLabel("Action: -")
+        self.feedback_action_label.setStyleSheet("font-size: 12px; color: #00D4AA;")
+        
+        feedback_layout.addWidget(self.feedback_button_label)
+        feedback_layout.addWidget(QtWidgets.QLabel("→"))
+        feedback_layout.addWidget(self.feedback_action_label)
+        feedback_layout.addStretch()
+        
+        left_layout.addWidget(feedback_group)
+        
         # --- Right: Editor ---
         right_widget = QtWidgets.QWidget()
         self.editor_layout = QtWidgets.QVBoxLayout(right_widget)
@@ -576,6 +594,15 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Populate editor from current assignment
         self._update_ui_from_assignment(key)
+        
+        # Update Binding Preview Panel
+        self.feedback_button_label.setText(f"Button: {label}")
+        effective = self.staging_manager.get_effective_state(key)
+        if effective:
+            action_desc = self._get_binding_description(effective.get("action", ""), effective.get("params", {}))
+            self.feedback_action_label.setText(f"Action: {action_desc}")
+        else:
+            self.feedback_action_label.setText("Action: Not configured")
 
 
     def right_panel_enabled(self, enabled: bool) -> None:
