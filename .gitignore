@@ -9,3 +9,8 @@ __pycache__/
 *.bak
 CLAUDE.md
 AGENTS.md
+
+# makepkg build artifacts
+pkg/
+src/
+*.pkg.tar*
