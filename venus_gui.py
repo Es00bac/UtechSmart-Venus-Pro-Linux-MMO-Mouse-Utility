@@ -104,22 +104,68 @@ class KeyCaptureEdit(QtWidgets.QLineEdit):
     def isEmpty(self) -> bool:
         return not self._hid_name
 
-    # X11 native scan codes for right-side modifiers (left-side handled by _QT_TO_HID)
+    # Qt reports a generic Key_Shift/Control/Alt/Meta value for both sides.
+    # X11/XKB usually exposes evdev + 8 here, while native Wayland backends may
+    # expose the evdev code itself.  Only consult these maps for an actual Qt
+    # modifier key, so overlapping ordinary-key scan codes cannot be mistaken
+    # for modifiers.
     _RIGHT_MOD_SCANCODES = {
         62: "Right Shift",   # X11 keycode for Right Shift
         105: "Right Ctrl",   # X11 keycode for Right Ctrl
         108: "Right Alt",    # X11 keycode for Right Alt
         134: "Right GUI",    # X11 keycode for Right Super
+        54: "Right Shift",   # Linux evdev KEY_RIGHTSHIFT
+        97: "Right Ctrl",    # Linux evdev KEY_RIGHTCTRL
+        100: "Right Alt",    # Linux evdev KEY_RIGHTALT
+        126: "Right GUI",    # Linux evdev KEY_RIGHTMETA
     }
+    _RIGHT_MOD_NATIVE_KEYS = {
+        0xFFE2: "Right Shift",  # XK_Shift_R
+        0xFFE4: "Right Ctrl",   # XK_Control_R
+        0xFFEA: "Right Alt",    # XK_Alt_R
+        0xFFEC: "Right GUI",    # XK_Super_R
+    }
+
+    @classmethod
+    def modifier_name_for_event(cls, event: QtGui.QKeyEvent) -> str | None:
+        """Return a side-aware modifier name for a Qt key event."""
+        key = event.key()
+        altgr_key = getattr(QtCore.Qt.Key, "Key_AltGr", None)
+        modifier_defaults = {
+            QtCore.Qt.Key.Key_Shift: "Left Shift",
+            QtCore.Qt.Key.Key_Control: "Left Ctrl",
+            QtCore.Qt.Key.Key_Alt: "Left Alt",
+            QtCore.Qt.Key.Key_Meta: "Left GUI",
+        }
+        if altgr_key is not None:
+            modifier_defaults[altgr_key] = "Right Alt"
+        if key not in modifier_defaults:
+            return None
+
+        native_name = cls._RIGHT_MOD_NATIVE_KEYS.get(event.nativeVirtualKey())
+        scan_name = cls._RIGHT_MOD_SCANCODES.get(event.nativeScanCode())
+        if altgr_key is not None and key == altgr_key:
+            expected_family = "Alt"
+        else:
+            expected_family = {
+                QtCore.Qt.Key.Key_Shift: "Shift",
+                QtCore.Qt.Key.Key_Control: "Ctrl",
+                QtCore.Qt.Key.Key_Alt: "Alt",
+                QtCore.Qt.Key.Key_Meta: "GUI",
+            }[key]
+        for candidate in (native_name, scan_name):
+            if candidate and expected_family in candidate:
+                return candidate
+        return modifier_defaults[key]
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         key = event.key()
         mods = event.modifiers()
 
-        # Check for right-side modifiers via native scan code
-        scan = event.nativeScanCode()
-        if scan in self._RIGHT_MOD_SCANCODES:
-            name = self._RIGHT_MOD_SCANCODES[scan]
+        # Check for right-side modifiers via native scan/virtual-key metadata.
+        modifier_name = self.modifier_name_for_event(event)
+        if modifier_name:
+            name = modifier_name
         elif bool(mods & QtCore.Qt.KeyboardModifier.KeypadModifier) and key in self._KEYPAD_MAP:
             name = self._KEYPAD_MAP[key]
         else:
@@ -1063,8 +1109,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.add_key_combo.addItem("Mouse: Middle Button", ("mouse", 0x04))
         self.add_key_combo.addItem("Mouse: Back Button", ("mouse", 0x08))
         self.add_key_combo.addItem("Mouse: Forward Button", ("mouse", 0x10))
-        self.add_key_combo.addItem(
-            "Modifier: Shift", ("modifier", vp.MACRO_SHIFT_CODE))
+        for modifier_name, modifier_code in vp.MACRO_MODIFIER_CODES.items():
+            self.add_key_combo.addItem(
+                f"Modifier: {modifier_name}",
+                ("modifier", modifier_code),
+            )
         self.add_key_combo.insertSeparator(self.add_key_combo.count())
         manual_keys = sorted(
             ((name, code) for code, name in self.HID_USAGE_TO_NAME.items()
@@ -1300,26 +1349,26 @@ class MainWindow(QtWidgets.QMainWindow):
                 key_text = key_event.text().upper()
                 qt_key = key_event.key()
 
-                unsupported_modifiers = (
-                    QtCore.Qt.KeyboardModifier.ControlModifier |
-                    QtCore.Qt.KeyboardModifier.AltModifier |
-                    QtCore.Qt.KeyboardModifier.MetaModifier
-                )
-                if (key_event.modifiers() & unsupported_modifiers or
-                        qt_key in (
-                            QtCore.Qt.Key.Key_Control,
-                            QtCore.Qt.Key.Key_Alt,
-                            QtCore.Qt.Key.Key_Meta,
-                        )):
-                    self._set_macro_builder_status(
-                        "Recording skipped a Ctrl/Alt/Meta combination: only "
-                        "the capture-confirmed Shift modifier is available in "
-                        "this macro format.", error=True)
-                    return True
+                modifier = self._qt_key_to_macro_modifier(key_event)
+                if modifier is not None:
+                    modifier_name, keycode = modifier
+                    key_name = f"Modifier: {modifier_name}"
+                    is_modifier = True
+                    event_type = "modifier"
+                else:
+                    # Map the non-modifier Qt key to a keyboard HID usage.
+                    key_name = self._qt_key_to_name(qt_key, key_text)
+                    if not key_name or key_name not in vp.HID_KEY_USAGE:
+                        self._set_macro_builder_status(
+                            f"Recording skipped unsupported key 0x{qt_key:X}.",
+                            error=True,
+                        )
+                        return True
+                    keycode = vp.HID_KEY_USAGE[key_name]
+                    is_modifier = False
+                    event_type = "keyboard"
 
-                # Map Qt key to HID key name
-                key_name = self._qt_key_to_name(qt_key, key_text)
-                if key_name and key_name in vp.HID_KEY_USAGE:
+                if key_name:
                     current_time = time.time() * 1000  # ms
                     if (self._last_key_time > 0 and
                             self.macro_event_table.rowCount()):
@@ -1335,13 +1384,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             delay_widget.setValue(previous_delay)
 
                     is_down = event.type() == QtCore.QEvent.Type.KeyPress
-                    is_modifier = key_name == "Shift"
-                    keycode = (vp.MACRO_SHIFT_CODE if is_modifier
-                               else vp.HID_KEY_USAGE[key_name])
                     added = self._add_event_to_table(
                         key_name, is_down, vp.MACRO_MIN_DELAY_MS,
                         is_modifier=is_modifier,
-                        event_type="modifier" if is_modifier else "keyboard",
+                        event_type=event_type,
                         keycode=keycode,
                     )
                     if not added:
@@ -1364,9 +1410,21 @@ class MainWindow(QtWidgets.QMainWindow):
         # Handle number keys
         if len(key_text) == 1 and key_text.isdigit():
             return key_text
-        if qt_key == QtCore.Qt.Key.Key_Shift:
-            return "Shift"
         return KeyCaptureEdit._QT_TO_HID.get(qt_key)
+
+    def _qt_key_to_macro_modifier(
+            self, key_event: QtGui.QKeyEvent) -> tuple[str, int] | None:
+        """Map a Qt modifier event to the vendor's stored-macro code."""
+        modifier_name = KeyCaptureEdit.modifier_name_for_event(key_event)
+        if modifier_name is None:
+            return None
+        # The vendor converter collapses left/right GUI keys to one byte.
+        if modifier_name in ("Left GUI", "Right GUI"):
+            modifier_name = "GUI"
+        keycode = vp.MACRO_MODIFIER_CODES.get(modifier_name)
+        if keycode is None:
+            return None
+        return modifier_name, keycode
 
     def _set_macro_builder_status(self, message: str,
                                   error: bool = False) -> None:
@@ -1652,7 +1710,7 @@ class MainWindow(QtWidgets.QMainWindow):
         total_delay = sum(event.delay_ms for event in events)
         output: list[str] = []
         pressed: set[tuple[str, int]] = set()
-        shift_active = False
+        active_modifiers: set[int] = set()
 
         for event in events:
             event_type = "modifier" if event.is_modifier else event.event_type
@@ -1662,8 +1720,11 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 pressed.discard(identity)
 
-            if event_type == "modifier" and event.keycode == vp.MACRO_SHIFT_CODE:
-                shift_active = event.is_down
+            if event_type == "modifier":
+                if event.is_down:
+                    active_modifiers.add(event.keycode)
+                else:
+                    active_modifiers.discard(event.keycode)
             elif event_type == "mouse" and event.is_down:
                 mouse_names = {
                     0x01: "Left click", 0x02: "Right click",
@@ -1672,14 +1733,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 }
                 output.append(f"[{mouse_names.get(event.keycode, 'Mouse click')}]")
             elif event_type == "keyboard" and event.is_down:
-                character = vp.ASCII_FROM_HID.get(
-                    (event.keycode, shift_active))
-                if character is not None:
-                    output.append(character)
-                else:
+                non_text_modifiers = active_modifiers.intersection(
+                    vp.MACRO_NON_TEXT_MODIFIER_CODES)
+                if non_text_modifiers:
+                    modifier_labels = "+".join(
+                        vp.MACRO_MODIFIER_NAMES.get(code, f"0x{code:02X}")
+                        for code in sorted(active_modifiers)
+                    )
                     name = self.HID_USAGE_TO_NAME.get(
                         event.keycode, f"0x{event.keycode:02X}")
-                    output.append(f"[{name}]")
+                    output.append(f"[{modifier_labels}+{name}]")
+                else:
+                    shift_active = bool(
+                        active_modifiers.intersection(
+                            vp.MACRO_SHIFT_CODES))
+                    character = vp.ASCII_FROM_HID.get(
+                        (event.keycode, shift_active))
+                    if character is not None:
+                        output.append(character)
+                    else:
+                        name = self.HID_USAGE_TO_NAME.get(
+                            event.keycode, f"0x{event.keycode:02X}")
+                        output.append(f"[{name}]")
 
         rendered = json.dumps("".join(output), ensure_ascii=False)
         warning = f" · ⚠ {len(pressed)} still pressed" if pressed else ""
@@ -4087,8 +4162,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                              update_preview=False)
                 else:
                     if is_modifier:
+                        modifier_name = vp.MACRO_MODIFIER_NAMES.get(keycode)
                         key_name = (
-                            "Modifier: Shift" if keycode == vp.MACRO_SHIFT_CODE
+                            f"Modifier: {modifier_name}" if modifier_name
                             else f"Modifier 0x{keycode:02X}")
                     else:
                         key_name = self.HID_USAGE_TO_NAME.get(
@@ -4143,7 +4219,10 @@ class MainWindow(QtWidgets.QMainWindow):
         for event in events:
             event_type = "modifier" if event.is_modifier else event.event_type
             if event_type == "modifier":
-                key_name = "Modifier: Shift"
+                modifier_name = vp.MACRO_MODIFIER_NAMES.get(event.keycode)
+                key_name = (
+                    f"Modifier: {modifier_name}" if modifier_name
+                    else f"Modifier 0x{event.keycode:02X}")
             else:
                 key_name = self.HID_USAGE_TO_NAME.get(
                     event.keycode, f"Key 0x{event.keycode:02X}")

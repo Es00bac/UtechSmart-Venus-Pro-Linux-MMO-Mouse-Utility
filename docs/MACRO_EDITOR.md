@@ -43,14 +43,17 @@ generate new random delays during playback.
 ## Recording and manual events
 
 **Record** captures supported keyboard press/release events and the elapsed
-time after the preceding event. Shift is the only macro modifier confirmed in
-the supplied vendor data. Ctrl, Alt, and Meta combinations are skipped with a
-visible warning rather than being recorded incorrectly.
+time after the preceding event. Ctrl, Shift, Alt, and GUI/Super modifier
+presses and releases are stored as their own hardware events, so combinations
+such as Ctrl+C and Ctrl+Alt+Delete preserve their ordering and timing. Left and
+right Ctrl, Shift, and Alt have separate vendor codes when Qt supplies enough
+native key information to distinguish them. The firmware has only one shared
+GUI/Super code.
 
 The **Manual Events** builder can add:
 
 - keyboard keys;
-- the confirmed Shift modifier event;
+- left/right Ctrl, Shift, and Alt plus the shared GUI/Super modifier;
 - left, right, middle, back, and forward mouse-button masks;
 - a complete tap, a press only, or a release only.
 

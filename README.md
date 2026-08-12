@@ -75,8 +75,9 @@ If your device reports a different ID, verify support before assuming compatibil
 
 - **Button Remapping:** Configure 16 Areson controls or all 19 mapped Holtek
   controls, including the 12-button side panel.
-- **Modifier Support:** On Areson, bind combinations such as `Ctrl+Shift+1`
-  and `Alt+F1`.
+- **Modifier Support:** On Areson, bind or record combinations such as
+  `Ctrl+Shift+1`, `Alt+F1`, and `Ctrl+Alt+Delete`; hardware macros preserve
+  modifier press/release order and left/right identity where the protocol does.
 - **Macro Engine:** Slot-oriented editor with recording, reordering, duplication,
   exact capacity feedback, and fixed or randomized timing.
 - **Text Macros:** Convert US-layout text with separate key-hold, inter-key,
@@ -110,9 +111,10 @@ Holtek device is connected.
 ### Macros tab
 
 Build text with fixed or randomized inter-key delays, append or replace events,
-record supported keys, reorder steps, and see the exact 69-event hardware
-capacity before saving. See the [macro editor guide](docs/MACRO_EDITOR.md) for
-timing semantics and hardware limits.
+record keyboard shortcuts with Ctrl/Shift/Alt/GUI, reorder steps, and see the
+exact 69-event hardware capacity before saving. See the
+[macro editor guide](docs/MACRO_EDITOR.md) for timing semantics and hardware
+limits.
 
 ![Macros tab](Macros.png)
 

@@ -147,6 +147,29 @@ class ProtocolBuilderTests(unittest.TestCase):
         checksum = vp.calculate_terminator_checksum(header + events, 2)
         self.assertEqual((2 + sum(events) + checksum) & 0xFF, 0x55)
 
+    def test_macro_modifier_codes_match_vendor_converter(self):
+        expected = {
+            "Left Ctrl": 0x01,
+            "Left Shift": 0x02,
+            "Left Alt": 0x04,
+            "GUI": 0x08,
+            "Right Ctrl": 0x10,
+            "Right Shift": 0x20,
+            "Right Alt": 0x40,
+        }
+        self.assertEqual(vp.MACRO_MODIFIER_CODES, expected)
+        for code in expected.values():
+            self.assertEqual(
+                vp.MacroEvent(
+                    code, True, 3, True, "modifier").to_bytes(),
+                bytes((0x80, code, 0x00, 0x00, 0x03)),
+            )
+            self.assertEqual(
+                vp.MacroEvent(
+                    code, False, 3, True, "modifier").to_bytes(),
+                bytes((0x40, code, 0x00, 0x00, 0x03)),
+            )
+
     def test_text_macro_uses_captured_shift_order_and_timing(self):
         self.assertEqual(vp.text_macro_requirements("aA!"), (10, ()))
         events = vp.build_text_macro_events(

@@ -446,7 +446,34 @@ MACRO_REPEAT_TOGGLE = 0xFF   # Toggle on/off
 MACRO_SLOT_SIZE = 0x180
 MACRO_HEADER_SIZE = 0x20
 MACRO_TERMINATOR_SIZE = 4
-MACRO_SHIFT_CODE = 0x20
+
+# Stored macros do not use the HID report modifier byte used by direct button
+# bindings.  These are the one-byte codes emitted by the vendor driver's
+# StMacro_To_HdMacro converter.  Left/right GUI collapse to the same 0x08 code.
+MACRO_MODIFIER_CODES = {
+    "Left Ctrl": 0x01,
+    "Left Shift": 0x02,
+    "Left Alt": 0x04,
+    "GUI": 0x08,
+    "Right Ctrl": 0x10,
+    "Right Shift": 0x20,
+    "Right Alt": 0x40,
+}
+MACRO_MODIFIER_NAMES = {
+    code: name for name, code in MACRO_MODIFIER_CODES.items()
+}
+MACRO_SHIFT_CODES = frozenset((
+    MACRO_MODIFIER_CODES["Left Shift"],
+    MACRO_MODIFIER_CODES["Right Shift"],
+))
+MACRO_NON_TEXT_MODIFIER_CODES = frozenset(
+    code for code in MACRO_MODIFIER_NAMES if code not in MACRO_SHIFT_CODES
+)
+
+# Backward-compatible name used by the text builder.  Existing captures of
+# shifted text use the vendor's right-Shift code, so keep generating that exact
+# byte while accepting both left and right Shift everywhere else.
+MACRO_SHIFT_CODE = MACRO_MODIFIER_CODES["Right Shift"]
 MACRO_MIN_DELAY_MS = 3
 MACRO_MAX_EVENTS = (
     MACRO_SLOT_SIZE - MACRO_HEADER_SIZE - MACRO_TERMINATOR_SIZE
@@ -872,7 +899,7 @@ class MacroEvent:
         
         Status codes:
         - 0x81 = Key Down, 0x41 = Key Up (regular keys)
-        - 0x80 = Modifier Down, 0x40 = Modifier Up (Shift, Ctrl, Alt)
+        - 0x80 = Modifier Down, 0x40 = Modifier Up
         - 0x84 = Mouse Down, 0x44 = Mouse Up
 
         The vendor converter accepts event classes 0, 1, and 4 only.  Relative
@@ -980,13 +1007,20 @@ def build_text_macro_events(
 
 def macro_events_to_text(events: Iterable[MacroEvent]) -> str:
     """Best-effort text preview for keyboard events in a hardware macro."""
-    shift_active = False
+    active_modifiers: set[int] = set()
     characters: list[str] = []
     for event in events:
         event_type = "modifier" if event.is_modifier else event.event_type
-        if event_type == "modifier" and event.keycode == MACRO_SHIFT_CODE:
-            shift_active = event.is_down
-        elif event_type == "keyboard" and event.is_down:
+        if event_type == "modifier":
+            if event.is_down:
+                active_modifiers.add(event.keycode)
+            else:
+                active_modifiers.discard(event.keycode)
+        elif (event_type == "keyboard" and event.is_down and
+              not active_modifiers.intersection(
+                  MACRO_NON_TEXT_MODIFIER_CODES)):
+            shift_active = bool(
+                active_modifiers.intersection(MACRO_SHIFT_CODES))
             character = ASCII_FROM_HID.get((event.keycode, shift_active))
             if character is not None:
                 characters.append(character)
