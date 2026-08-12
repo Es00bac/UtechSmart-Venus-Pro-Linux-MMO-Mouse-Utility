@@ -8,7 +8,9 @@ for _parent in Path(__file__).resolve().parents:
 
 import venus_protocol as vp
 
-# Expected values from old_stuff/win.md calculations
+# Expected values from the capture-backed page/offset map.  The three primary
+# buttons occupy existing page-1/page-2 slots rather than the obsolete page-3
+# guesses that this diagnostic used before the mapping was corrected.
 # Format: (code_hi, code_lo, apply_offset)
 EXPECTED = {
     "Button 1": (0x01, 0x00, 0x60),  # Index 0
@@ -20,9 +22,9 @@ EXPECTED = {
     "Button 11": (0x02, 0xC0, 0x98), # Index 14
     "Button 12": (0x02, 0xE0, 0x9C), # Index 15
     "Button 13": (0x02, 0x60, 0x8C), # Index 11
-    "Button 14": (0x02, 0x40, 0x88), # Index 10
-    "Button 15": (0x03, 0x00, 0xA0), # Index 16
-    "Button 16": (0x03, 0x20, 0xA4), # Index 17
+    "Button 14": (0x01, 0xE0, 0x7C), # Left mouse button
+    "Button 15": (0x02, 0x40, 0x88), # Middle mouse button
+    "Button 16": (0x01, 0xC0, 0x78), # Right mouse button
 }
 
 def verify():

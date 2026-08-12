@@ -17,8 +17,8 @@
       <li>Text macros with fixed or randomized key timing</li>
       <li>Native left, right, middle, back, and forward mouse events in macros</li>
       <li>Battery and cable status in the desktop tray</li>
-      <li>Minimum-brightness battery-color mouse LED mode</li>
-      <li>RGB lighting configuration (Neon, Breathing, Steady)</li>
+      <li>Low-brightness battery-color mouse LED mode</li>
+      <li>RGB lighting configuration (Neon, Breathing, Steady, speed, and brightness)</li>
       <li>Controller-aware DPI stages and profile settings</li>
       <li>Polling rate adjustment (125Hz - 1000Hz)</li>
       <li>Profile management (save/load configurations)</li>

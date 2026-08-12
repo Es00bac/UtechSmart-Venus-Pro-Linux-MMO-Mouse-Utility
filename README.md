@@ -84,9 +84,10 @@ If your device reports a different ID, verify support before assuming compatibil
 - **Mouse Macro Events:** Add native left, right, middle, back, and forward taps
   or individual press/release events.
 - **Battery Tray Icon:** Shows battery level and cable state through Qt's desktop tray API.
-- **Battery-color Mouse LED:** Optional minimum-brightness green → yellow →
+- **Battery-color Mouse LED:** Optional low-brightness green → yellow →
   orange → red gauge, controlled by the app while it remains in the tray.
-- **RGB Lighting:** Full control over LED color, brightness, and effects such as Steady, Breathing, Neon, and Off.
+- **RGB Lighting:** Full control over LED color, brightness, animation speed,
+  and Steady, Breathing, Neon, or Off effects.
 - **DPI Profiles:** Configure 1–5 enabled Areson stages or 1–10 per-profile
   Holtek stages, including the Holtek current stage.
 - **Controller-aware UI:** Shows only actions the connected Areson or Holtek
@@ -122,7 +123,8 @@ events and can bulk-edit selected delays.
 
 ### RGB tab
 
-Control LED color, brightness, and effect mode.
+Control LED color, brightness, effect mode, and the captured five-step
+animation speed for Breathing or Neon.
 
 - **Off** — disable the LED
 - **Steady** — solid color at adjustable brightness
@@ -221,11 +223,13 @@ normally requires its AppIndicator/KStatusNotifier extension. If the desktop
 does not expose a tray, the main configuration window still works normally.
 
 The RGB tab and tray menu both expose **Battery-color mouse LED**. This mode
-uses the lowest steady-light brightness found in the Windows capture, checks
-the battery once per minute, and writes a new color only when the hardware's
-10% battery step changes. Closing the window keeps it active in the tray;
-quitting the app restores the lighting that was active when the mode was
-enabled. The preference is remembered for the next launch.
+uses the capture-confirmed 10% steady-light setting, checks the battery once
+per minute, and writes a new color only when the hardware's 10% battery step
+changes. The absolute raw minimum is avoided because the physical LED's green
+channel overwhelms red there, making yellow and orange appear green. Closing
+the window keeps the controller active in the tray; quitting the app restores
+the lighting that was active when the mode was enabled. The preference is
+remembered for the next launch.
 
 This is intentionally a user-session background controller rather than a root
 daemon: it shares the same hidraw/uaccess permissions as the GUI and can own a
@@ -273,6 +277,10 @@ Practical notes:
 - The Areson lighting command is an EEPROM write rather than a known volatile
   LED command. Battery LED mode therefore writes only on a reported 10% step
   change and restores the prior lighting on normal application exit.
+- The wireless mouse firmware can turn RGB off after inactivity even when a
+  steady color is stored. Neither the vendor UI nor the reverse-engineered
+  configuration exposes an always-on/idle-time field. The battery controller
+  deliberately avoids periodic EEPROM writes as an LED keepalive.
 
 ## Development
 
