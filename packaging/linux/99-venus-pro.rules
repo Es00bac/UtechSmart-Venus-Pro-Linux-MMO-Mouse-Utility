@@ -1,14 +1,14 @@
 # UtechSmart Venus Pro / Venus MMO Gaming Mouse
-# Grants non-root access to hidraw (hidapi) and usb (pyusb) device nodes
+# Desktop sessions receive an ACL through uaccess; MODE is the safe fallback.
 
 # Venus Pro (Wireless Receiver)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", MODE="0666"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", TAG+="uaccess", MODE="0660"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="25a7", ATTR{idProduct}=="fa07", TAG+="uaccess", MODE="0660"
 
 # Venus Pro (Wired)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa08", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa08", MODE="0666"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa08", TAG+="uaccess", MODE="0660"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="25a7", ATTR{idProduct}=="fa08", TAG+="uaccess", MODE="0660"
 
 # Venus MMO (Holtek variant)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04d9", ATTRS{idProduct}=="fc55", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="04d9", ATTRS{idProduct}=="fc55", MODE="0666"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04d9", ATTRS{idProduct}=="fc55", TAG+="uaccess", MODE="0660"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="04d9", ATTR{idProduct}=="fc55", TAG+="uaccess", MODE="0660"

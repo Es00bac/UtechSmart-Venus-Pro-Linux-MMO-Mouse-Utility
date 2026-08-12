@@ -8,3 +8,4 @@ Type=Application
 Categories=Settings;HardwareSettings;
 Keywords=mouse;configuration;macro;rgb;
 StartupNotify=true
+StartupWMClass=venusprolinux

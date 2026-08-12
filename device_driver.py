@@ -26,7 +26,7 @@ def get_button_profiles(device_type: str) -> dict:
     return vp.BUTTON_PROFILES
 
 
-def create_device(device_type: str, path: str):
+def create_device(device_type: str, path: bytes | str):
     """Factory: create the right device class for the variant.
 
     Returns HoltekDevice or VenusDevice.

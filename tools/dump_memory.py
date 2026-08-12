@@ -1,15 +1,14 @@
 from pathlib import Path
+import os
 import sys
+import time
 
 for _parent in Path(__file__).resolve().parents:
     if (_parent / "venus_protocol.py").exists():
         sys.path.insert(0, str(_parent))
         break
 
-import sys
-import os
-import time
-from venus_protocol import VenusDevice, VENDOR_ID, PRODUCT_IDS, list_devices
+from venus_protocol import VenusDevice, list_devices
 
 def main():
     avail = list_devices()

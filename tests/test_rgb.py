@@ -38,5 +38,9 @@ class TestRGB(unittest.TestCase):
         pkt = vp.build_rgb(0xE4, 0x00, 0x7F, vp.RGB_MODE_STEADY, 100)
         self.assertEqual(pkt[9], 0xF2)
 
+    def test_build_rgb_neon_uses_mode_complement(self):
+        pkt = vp.build_rgb(0xFF, 0x00, 0xFF, vp.RGB_MODE_NEON, 20)
+        self.assertEqual(pkt[10:14], bytes.fromhex("02533c19"))
+
 if __name__ == '__main__':
     unittest.main()
