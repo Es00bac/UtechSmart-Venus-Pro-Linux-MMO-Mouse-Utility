@@ -74,9 +74,18 @@ class BatteryLedControllerTests(unittest.TestCase):
         self.assertEqual(
             indicator_reports[1], vp.build_battery_indicator_rgb(60))
 
+        next_status = vp.BatteryStatus(5, 50, False, b"\x05\x00")
+        self.window._apply_battery_led_status(next_status)
+        self.window._apply_battery_led_status(next_status)
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(
+            send.call_args.args[0][1],
+            vp.build_battery_indicator_rgb(50),
+        )
+
         self.window._set_battery_led_enabled(False)
         self.assertFalse(self.window.battery_led_enabled)
-        self.assertEqual(send.call_count, 2)
+        self.assertEqual(send.call_count, 3)
         restore_reports = send.call_args.args[0]
         self.assertEqual(
             restore_reports[1],
@@ -105,6 +114,40 @@ class BatteryLedControllerTests(unittest.TestCase):
         with mock.patch.object(gui.vp, "list_devices", return_value=[info]):
             self.window._refresh_and_connect(silent=True)
         self.window._read_settings.assert_called_once_with(silent=True)
+
+    def test_areson_animated_mode_exposes_speed_and_sends_both_records(self):
+        send = mock.Mock(return_value=True)
+        self.window._send_reports = send
+        mode_index = self.window.rgb_mode.findData(vp.RGB_MODE_BREATHING)
+        self.window.rgb_mode.setCurrentIndex(mode_index)
+        self.window.rgb_speed.setValue(5)
+
+        self.assertFalse(self.window.rgb_speed.isHidden())
+        self.window._apply_rgb_custom()
+
+        reports = send.call_args.args[0]
+        color = self.window.rgb_current_color
+        expected = vp.build_rgb_packets(
+            color.red(), color.green(), color.blue(),
+            vp.RGB_MODE_BREATHING,
+            self.window.rgb_brightness.value(),
+            effect_speed=5,
+        )
+        self.assertEqual(reports, [vp.build_simple(vp.CMD_READY), *expected])
+
+    def test_battery_worker_is_released_only_after_thread_finishes(self):
+        thread = mock.Mock(spec=gui.BatteryQueryThread)
+        self.window._battery_thread = thread
+        status = vp.BatteryStatus(6, 60, False, b"\x06\x00")
+        self.window._apply_battery_led_status = mock.Mock()
+
+        self.window._battery_query_finished(status, "")
+        self.assertIs(self.window._battery_thread, thread)
+        thread.deleteLater.assert_not_called()
+
+        self.window._battery_thread_finished(thread)
+        self.assertIsNone(self.window._battery_thread)
+        thread.deleteLater.assert_called_once_with()
 
 
 if __name__ == "__main__":

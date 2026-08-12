@@ -126,7 +126,7 @@ def _capture_areson(window: gui.MainWindow, output_dir: Path) -> None:
     window.battery_led_checkbox.setChecked(True)
     window.battery_led_checkbox.blockSignals(False)
     window.log_area.setPlainText(
-        "Battery LED gauge: minimum brightness, 10% update steps.\n"
+        "Battery LED gauge: low brightness, 10% update steps.\n"
         "Manual lighting is restored when the controller exits normally.")
     _save_window(window, output_dir / "RGB.png")
 

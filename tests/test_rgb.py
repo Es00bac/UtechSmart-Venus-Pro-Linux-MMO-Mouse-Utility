@@ -40,7 +40,23 @@ class TestRGB(unittest.TestCase):
 
     def test_build_rgb_neon_uses_mode_complement(self):
         pkt = vp.build_rgb(0xFF, 0x00, 0xFF, vp.RGB_MODE_NEON, 20)
-        self.assertEqual(pkt[10:14], bytes.fromhex("02533c19"))
+        self.assertEqual(pkt[10:14], bytes.fromhex("03523c19"))
+
+    def test_breathing_sequence_contains_mode_and_speed_records(self):
+        packets = vp.build_rgb_packets(
+            0xFF, 0x00, 0xFF, vp.RGB_MODE_BREATHING, 20,
+            effect_speed=5)
+        self.assertEqual(len(packets), 2)
+        self.assertEqual(packets[0][10:14], bytes.fromhex("02533c19"))
+        self.assertEqual(packets[1][2:8], bytes.fromhex("00005c020550"))
+        self.assertTrue(all(vp.report_checksum_valid(p) for p in packets))
+
+    def test_areson_mode_translation_preserves_ui_meaning(self):
+        self.assertEqual(vp.rgb_mode_to_hardware(vp.RGB_MODE_STEADY), 1)
+        self.assertEqual(vp.rgb_mode_to_hardware(vp.RGB_MODE_BREATHING), 2)
+        self.assertEqual(vp.rgb_mode_to_hardware(vp.RGB_MODE_NEON), 3)
+        self.assertEqual(vp.rgb_mode_from_hardware(2), vp.RGB_MODE_BREATHING)
+        self.assertEqual(vp.rgb_mode_from_hardware(3), vp.RGB_MODE_NEON)
 
 if __name__ == '__main__':
     unittest.main()

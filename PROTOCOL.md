@@ -336,24 +336,44 @@ Macro action repeat byte:
 
 The following write shapes are directly observed and are implemented:
 
-- steady/neon: 8 bytes at `0x0054`, containing RGB + RGB checksum, mode + mode
-  checksum, and brightness + brightness checksum;
+- every enabled effect: 8 bytes at `0x0054`, containing RGB + RGB checksum,
+  mode + mode checksum, and brightness + brightness checksum;
 - off: `00 55` at `0x0058`;
-- breathing/alternate effect: `03 52` at `0x005c`.
+- Respiration and Neon: an additional speed + speed-checksum pair at `0x005c`.
+
+The Areson mode byte is `01` Steady, `02` Respiration/Breathing, and `03`
+Neon. This differs from the application's older public constant ordering, so
+the protocol layer translates the two animated values instead of exposing a
+silent label swap. Captures exercise animation-speed values `01..05` (fast to
+slow); the UI now writes both required records for either animated effect.
 
 All inner two-/four-/eight-byte records retain the `sum == 0x55` invariant.
+The Windows captures leave roughly 25–35 ms between an acknowledgement and
+the next feature report. The implementation uses a conservative 50 ms settle
+interval for reliable write sequences. Without that gap the receiver may
+acknowledge and persist a lighting record without reloading the active LED
+engine until its physical lighting switch is cycled.
 The generic vendor binary also contains “stream”/main-lighting branches, but
 this mouse's configuration hides some of them. Those branches should not be
 claimed as confirmed Areson features until a matching capture exists.
 
-The lowest captured steady-light brightness pair is `01 54` (brightness byte
-plus its `0x55` complement). Battery LED mode uses that exact pair. Its
-application-level color mapping is full-saturation red at 0%, yellow at 50%,
-and green at 100%, linearly interpolated through orange/yellow-green. Because
-status command `04` reports only 11 levels, the physical LED has 11 gradient
-steps. The controller writes only when that level changes and restores the
-previous lighting on a normal exit; no volatile Areson LED command has been
-confirmed. **Capture; controller policy**
+The absolute lowest captured steady-light brightness pair is `01 54`
+(brightness byte plus its `0x55` complement), but hardware testing found that
+green overwhelms red at that PWM floor and mixed yellow/orange colors appear
+pure green. Battery LED mode therefore uses the next capture-confirmed low
+setting, 10% (`1e 37`). Its application-level color mapping is full-saturation
+red at 0%, yellow at 50%, and green at 100%, linearly interpolated through
+orange/yellow-green. Because status command `04` reports only 11 levels, the
+physical LED has 11 gradient steps. The controller writes only when that level
+changes and restores the previous lighting on a normal exit; no separate
+volatile Areson LED command has been confirmed. **Capture; live hardware;
+controller policy**
+
+Wireless firmware may extinguish RGB after inactivity even with a steady
+record selected. The vendor UI/configuration contains no idle-time or
+always-on control, so the application does not pretend that the EEPROM record
+can disable that firmware power-saving behavior and does not use repeated
+EEPROM writes as a keepalive. **Vendor binary/configuration; live hardware**
 
 ## Holtek summary (`04d9:fc55`)
 
@@ -398,7 +418,7 @@ modifier field. **Binary, live implementation history**
 | Profile switching | generic type hidden for this one-profile model | confirmed `8d` action exposed |
 | Hardware macros | 16 slots, editor and repeat modes | disabled; no compatible format confirmed |
 | Polling | 125/250/500/1000 Hz | 125/250/500/1000 Hz |
-| Lighting | color, known modes, brightness, battery gauge | per-profile color/mode/brightness/speed |
+| Lighting | color, known modes, brightness/speed, battery gauge | per-profile color/mode/brightness/speed |
 | Raw reports | 17-byte diagnostic tab | disabled to prevent cross-protocol packets |
 
 Generic binary branches without matching model evidence remain hidden. In

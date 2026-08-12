@@ -120,7 +120,7 @@ class ProtocolBuilderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "1..8"):
             vp.build_dpi_stage_count(0)
 
-    def test_battery_led_gradient_uses_captured_minimum_brightness(self):
+    def test_battery_led_gradient_uses_low_mixed_color_brightness(self):
         self.assertEqual(vp.battery_gradient_rgb(0), (255, 0, 0))
         self.assertEqual(vp.battery_gradient_rgb(25), (255, 128, 0))
         self.assertEqual(vp.battery_gradient_rgb(50), (255, 255, 0))
@@ -130,11 +130,11 @@ class ProtocolBuilderTests(unittest.TestCase):
         packet = vp.build_battery_indicator_rgb(60)
         self.assertEqual(packet[6:9], bytes((204, 255, 0)))
         self.assertEqual(packet[10], vp.RGB_MODE_STEADY)
-        self.assertEqual(packet[12:14], b"\x01\x54")
+        self.assertEqual(packet[12:14], b"\x1e\x37")
         self.assertTrue(vp.report_checksum_valid(packet))
         self.assertEqual(
             vp.build_battery_indicator_rgb(0)[6:14],
-            bytes.fromhex("ff00005601540154"),
+            bytes.fromhex("ff00005601541e37"),
         )
 
     def test_macro_mouse_events_and_checksum(self):
@@ -233,6 +233,19 @@ class DeviceTests(unittest.TestCase):
         device._dev = handle
         with self.assertRaisesRegex(vp.ProtocolError, "battery step"):
             device.query_status()
+
+    def test_reliable_sequences_leave_the_captured_firmware_gap(self):
+        handle = FakeHandle()
+        device = vp.VenusDevice(b"/dev/fake")
+        device._dev = handle
+        with mock.patch.object(vp.time, "sleep") as sleep:
+            self.assertTrue(
+                device.send_reliable(vp.build_simple(vp.CMD_READY)))
+            sleep.assert_called_once_with(vp.REPORT_SETTLE_SECONDS)
+
+            sleep.reset_mock()
+            self.assertTrue(device.begin_write())
+            sleep.assert_called_once_with(vp.REPORT_SETTLE_SECONDS)
 
     def test_enumeration_selects_real_config_interface(self):
         entries = [

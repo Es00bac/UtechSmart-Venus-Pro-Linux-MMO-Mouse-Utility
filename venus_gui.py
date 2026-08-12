@@ -823,6 +823,11 @@ class MainWindow(QtWidgets.QMainWindow):
                         restore.get("mode", vp.RGB_MODE_STEADY)))),
                     "brightness": max(0, min(100, int(
                         restore.get("brightness", 100)))),
+                    "speed": max(vp.RGB_EFFECT_SPEED_MIN,
+                                 min(vp.RGB_EFFECT_SPEED_MAX, int(
+                                     restore.get(
+                                         "speed",
+                                         vp.RGB_EFFECT_SPEED_DEFAULT)))),
                 }
             self.battery_led_enabled = enabled
             self._battery_led_restore = parsed_restore
@@ -1763,8 +1768,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rgb_mode = QtWidgets.QComboBox()
         self.rgb_mode.addItem("Off", vp.RGB_MODE_OFF)
         self.rgb_mode.addItem("Steady", vp.RGB_MODE_STEADY)
-        self.rgb_mode.addItem("Neon", vp.RGB_MODE_NEON)
         self.rgb_mode.addItem("Breathing", vp.RGB_MODE_BREATHING)
+        self.rgb_mode.addItem("Neon", vp.RGB_MODE_NEON)
         self.rgb_mode.setCurrentIndex(1)  # Default to Steady
         self.rgb_mode.setToolTip("Select the lighting effect mode.")
         
@@ -1784,13 +1789,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.rgb_speed_label = QtWidgets.QLabel("Effect speed (raw):")
         self.rgb_speed = QtWidgets.QSpinBox()
-        self.rgb_speed.setRange(0, 0xFF)
-        self.rgb_speed.setValue(1)
+        self.rgb_speed.setRange(
+            vp.RGB_EFFECT_SPEED_MIN, vp.RGB_EFFECT_SPEED_MAX)
+        self.rgb_speed.setValue(vp.RGB_EFFECT_SPEED_DEFAULT)
         self.rgb_speed.setToolTip(
-            "Holtek per-profile animation speed byte. The exact scale is "
-            "firmware-defined; the factory value is 1.")
+            "Areson animation speed: 1 is fastest and 5 is slowest. "
+            "Holtek exposes a raw per-profile speed byte.")
         self.rgb_speed_label.setVisible(False)
         self.rgb_speed.setVisible(False)
+        self.rgb_mode.currentIndexChanged.connect(
+            self._update_rgb_effect_controls)
 
         apply_custom_button = QtWidgets.QPushButton("Apply Lighting")
         apply_custom_button.setStyleSheet("font-weight: bold; padding: 8px; background-color: #444;")
@@ -1800,9 +1808,12 @@ class MainWindow(QtWidgets.QMainWindow):
             "Use mouse LED as a battery gauge while this app is running")
         self.battery_led_checkbox.setChecked(self.battery_led_enabled)
         self.battery_led_checkbox.setToolTip(
-            "Uses the lowest captured steady-light brightness and updates only "
-            "when the mouse reports a different 10% battery step. Green is full, "
-            "yellow is half, and red is empty.")
+            "Uses a low 10% steady-light setting and updates only when the mouse "
+            "reports a different 10% battery step. The absolute raw minimum is "
+            "not used because it suppresses mixed red/green colors on this LED. "
+            "Green is full, yellow is half, and red is empty. The wireless "
+            "firmware may still switch its RGB off after inactivity; this mode "
+            "does not repeatedly rewrite the mouse's EEPROM as a keepalive.")
         self.battery_led_checkbox.toggled.connect(self._set_battery_led_enabled)
         gradient_label = QtWidgets.QLabel(
             '<span style="color:#00ff00">● full</span> → '
@@ -1848,6 +1859,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "b": self.rgb_current_color.blue(),
             "mode": int(self.rgb_mode.currentData() or vp.RGB_MODE_OFF),
             "brightness": self.rgb_brightness.value(),
+            "speed": self.rgb_speed.value(),
         }
 
     def _apply_rgb_restore_to_widgets(self, settings: dict[str, int]) -> None:
@@ -1857,6 +1869,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if mode_index >= 0:
             self.rgb_mode.setCurrentIndex(mode_index)
         self.rgb_brightness.setValue(settings["brightness"])
+        self.rgb_speed.setValue(settings.get(
+            "speed", vp.RGB_EFFECT_SPEED_DEFAULT))
+
+    def _update_rgb_effect_controls(self) -> None:
+        is_holtek = self.device_type == "holtek"
+        animated = self.rgb_mode.currentData() in (
+            vp.RGB_MODE_BREATHING, vp.RGB_MODE_NEON)
+        self.rgb_speed_label.setVisible(is_holtek or animated)
+        self.rgb_speed.setVisible(is_holtek or animated)
+        self.rgb_speed_label.setText(
+            "Effect speed (raw):" if is_holtek else
+            "Effect speed (1 fast–5 slow):")
 
 
     def _pick_rgb_color(self) -> None:
@@ -2138,7 +2162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         refresh_action = menu.addAction("Refresh Battery")
         refresh_action.triggered.connect(self._request_battery_refresh)
         self.battery_led_tray_action = menu.addAction(
-            "Battery-color mouse LED (minimum brightness)")
+            "Battery-color mouse LED (low brightness)")
         self.battery_led_tray_action.setCheckable(True)
         self.battery_led_tray_action.triggered.connect(
             self._set_battery_led_enabled)
@@ -2184,7 +2208,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.battery_led_enabled = True
             self._last_battery_led_level = None
             self._log(
-                "Battery LED: enabled (minimum brightness; updates on battery-step changes)")
+                "Battery LED: enabled (low brightness; updates on battery-step changes)")
         else:
             self.battery_led_enabled = False
             self._last_battery_led_level = None
@@ -2207,11 +2231,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_rgb_restore_to_widgets(settings)
         if self.device_type != "venus_pro" or self.device_path is None:
             return True
-        packet = vp.build_rgb(
+        packets = vp.build_rgb_packets(
             settings["r"], settings["g"], settings["b"],
-            settings["mode"], settings["brightness"])
+            settings["mode"], settings["brightness"],
+            settings.get("speed", vp.RGB_EFFECT_SPEED_DEFAULT))
         return self._send_reports(
-            [vp.build_simple(vp.CMD_READY), packet],
+            [vp.build_simple(vp.CMD_READY), *packets],
             "Battery LED restore", quiet=quiet)
 
     def _on_app_quit(self) -> None:
@@ -2242,7 +2267,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if success:
             self._last_battery_led_level = status.level
             self._log(
-                f"Battery LED: {status.percent}% -> RGB({r}, {g}, {b}) at minimum brightness")
+                f"Battery LED: {status.percent}% -> RGB({r}, {g}, {b}) at "
+                f"{vp.BATTERY_LED_BRIGHTNESS}% brightness")
 
     def _show_from_tray(self) -> None:
         self.showNormal()
@@ -2290,13 +2316,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._battery_thread = BatteryQueryThread(self.device_path, self)
         self._battery_thread.completed.connect(self._battery_query_finished)
+        thread = self._battery_thread
+        thread.finished.connect(
+            lambda finished_thread=thread:
+                self._battery_thread_finished(finished_thread))
         self._battery_thread.start()
 
     def _battery_query_finished(self, status: object, error: str) -> None:
-        thread = self._battery_thread
-        self._battery_thread = None
-        if thread:
-            thread.deleteLater()
         if isinstance(status, vp.BatteryStatus):
             connection = "USB cable" if status.cable_connected else "wireless"
             current = (status.level, status.cable_connected)
@@ -2317,6 +2343,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Venus Pro — disconnected or inaccessible")
             if error:
                 self._log(f"Battery refresh: {error}")
+
+    def _battery_thread_finished(self, thread: BatteryQueryThread) -> None:
+        """Release a worker only after QThread confirms run() has returned."""
+        if self._battery_thread is thread:
+            self._battery_thread = None
+        thread.deleteLater()
 
     def _refresh_devices(self) -> None:
         self.device_infos = vp.list_devices()
@@ -2539,12 +2571,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reset_button.setToolTip(
             "The Holtek factory-reset sequence is not confirmed." if is_holtek else "")
 
-        self.rgb_speed_label.setVisible(is_holtek)
-        self.rgb_speed.setVisible(is_holtek)
+        self.rgb_speed.setRange(
+            0 if is_holtek else vp.RGB_EFFECT_SPEED_MIN,
+            0xFF if is_holtek else vp.RGB_EFFECT_SPEED_MAX)
         self.rgb_brightness.setMaximum(0xFF if is_holtek else 100)
         self.rgb_brightness_form_label.setText(
             "Brightness (raw):" if is_holtek else "Brightness:")
         self._update_rgb_brightness_label(self.rgb_brightness.value())
+        self._update_rgb_effect_controls()
 
         self.dpi_profile_controls.setVisible(True)
         self.dpi_stage_count_spin.setMaximum(10 if is_holtek else 5)
@@ -3086,8 +3120,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.battery_led_enabled:
             self._set_battery_led_enabled(False, restore=False)
 
-        rgb_packet = vp.build_rgb(r, g, b, mode, brightness)
-        reports = [vp.build_simple(vp.CMD_READY), rgb_packet]
+        rgb_packets = vp.build_rgb_packets(
+            r, g, b, mode, brightness, self.rgb_speed.value())
+        reports = [vp.build_simple(vp.CMD_READY), *rgb_packets]
 
         mode_name = self.rgb_mode.currentText()
         self._send_reports(reports, f"RGB Custom: #{r:02x}{g:02x}{b:02x} {mode_name} {brightness}%")
@@ -3527,7 +3562,8 @@ class MainWindow(QtWidgets.QMainWindow):
             rgb_r = page0[0x54]
             rgb_g = page0[0x55]
             rgb_b = page0[0x56]
-            rgb_mode = page0[0x58]
+            rgb_mode_raw = page0[0x58]
+            rgb_mode = vp.rgb_mode_from_hardware(rgb_mode_raw)
             brightness_b1 = page0[0x5A]
             brightness = (100 if brightness_b1 == 0xFF else
                           0 if brightness_b1 <= 1 else
@@ -3543,7 +3579,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 if mode_index >= 0:
                     self.rgb_mode.setCurrentIndex(mode_index)
                 self.rgb_brightness.setValue(brightness)
-            self._log(f"  RGB: ({rgb_r},{rgb_g},{rgb_b}), Mode: 0x{rgb_mode:02X}, Brightness: {brightness}%")
+                self.rgb_speed.setValue(max(
+                    vp.RGB_EFFECT_SPEED_MIN,
+                    min(vp.RGB_EFFECT_SPEED_MAX, page0[0x5C])))
+            self._log(
+                f"  RGB: ({rgb_r},{rgb_g},{rgb_b}), "
+                f"Mode: 0x{rgb_mode_raw:02X}, Brightness: {brightness}%")
 
             # 4. Button Bindings
             self._log("  Parsing Button bindings...")

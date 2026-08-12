@@ -125,6 +125,13 @@ CMD_WRITE = 0x07
 CMD_READ = 0x08
 CMD_FACTORY_RESET = 0x09
 
+# Captures show the Windows driver leaving roughly 25-35 ms after each ACK
+# before its next feature report. Older live-write experiments used 50 ms
+# successfully. The firmware can acknowledge a faster EEPROM write yet defer
+# reloading its active setting until a hardware power-cycle, so retain the
+# conservative interval for reliable command sequences.
+REPORT_SETTLE_SECONDS = 0.05
+
 
 @dataclass(frozen=True)
 class ButtonProfile:
@@ -193,10 +200,10 @@ BUTTON_PROFILES = {
 
 RGB_PRESETS = {
     "Neon (Magenta)": bytes(
-        [0x00, 0x00, 0x54, 0x08, 0xFF, 0x00, 0xFF, 0x57, 0x02, 0x53, 0x3C, 0x19, 0x00, 0x00]
+        [0x00, 0x00, 0x54, 0x08, 0xFF, 0x00, 0xFF, 0x57, 0x03, 0x52, 0x3C, 0x19, 0x00, 0x00]
     ),
     "Breathing (Magenta)": bytes(
-        [0x00, 0x00, 0x5C, 0x02, 0x03, 0x52, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        [0x00, 0x00, 0x54, 0x08, 0xFF, 0x00, 0xFF, 0x57, 0x02, 0x53, 0x3C, 0x19, 0x00, 0x00]
     ),
     "Off": bytes([0x00, 0x00, 0x58, 0x02, 0x00, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
     "Steady (Magenta, 20%)": bytes(
@@ -380,9 +387,20 @@ BUTTON_TYPE_RGB_TOGGLE = 0x08  # Toggle RGB LED
 # RGB LED modes
 RGB_MODE_OFF = 0x00
 RGB_MODE_STEADY = 0x01
+# These are application-facing values retained for compatibility.  The Areson
+# EEPROM uses 0x02 for Respiration and 0x03 for Neon, so animated modes are
+# translated by rgb_mode_to_hardware() rather than written verbatim.
 RGB_MODE_NEON = 0x02
-RGB_MODE_BREATHING = 0x03  # Uses different packet format (offset 0x5C)
+RGB_MODE_BREATHING = 0x03
+RGB_EFFECT_SPEED_DEFAULT = 3
+RGB_EFFECT_SPEED_MIN = 1
+RGB_EFFECT_SPEED_MAX = 5
 RGB_MIN_BRIGHTNESS = 0  # build_rgb encodes this as the captured raw minimum 0x01
+# Raw minimum is excellent for a single channel but the physical LED's green
+# channel overwhelms red there, making mixed battery colors look pure green.
+# Ten percent is the next capture-confirmed setting and remains deliberately
+# dim while rendering yellow/orange transitions reliably.
+BATTERY_LED_BRIGHTNESS = 10
 
 # ASCII to HID mapping for Quick Text Macro
 # Maps char -> (keycode, modifier_mask)
@@ -588,8 +606,33 @@ def build_consumer_binding(code_hi: int, code_lo: int, usage: int) -> list[bytes
     body = bytes([count]) + events + bytes([_definition_checksum(events, count)])
     return _definition_write_packets(code_hi, code_lo, body)
 
-def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: int = 100) -> bytes:
-    """Build an RGB LED control packet.
+def rgb_mode_to_hardware(mode: int) -> int:
+    """Translate an application lighting mode to the Areson EEPROM value."""
+    mapping = {
+        RGB_MODE_OFF: 0x00,
+        RGB_MODE_STEADY: 0x01,
+        RGB_MODE_NEON: 0x03,
+        RGB_MODE_BREATHING: 0x02,
+    }
+    if mode not in mapping:
+        raise ValueError(f"unsupported RGB mode {mode}")
+    return mapping[mode]
+
+
+def rgb_mode_from_hardware(mode: int) -> int:
+    """Translate an Areson EEPROM lighting value to the application mode."""
+    mapping = {
+        0x00: RGB_MODE_OFF,
+        0x01: RGB_MODE_STEADY,
+        0x02: RGB_MODE_BREATHING,
+        0x03: RGB_MODE_NEON,
+    }
+    return mapping.get(mode, RGB_MODE_OFF)
+
+
+def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY,
+              brightness: int = 100) -> bytes:
+    """Build the primary RGB LED EEPROM record.
     
     Args:
         r, g, b: Color values 0-255
@@ -598,19 +641,18 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
     
     Packet formats (from USB captures):
     
-    Steady/Neon (offset 0x54):
+    Steady/Respiration/Neon (offset 0x54):
     [00, 00, 54, 08, R, G, B, ColorChk, Mode, ModeChk, B1, B2, 00, 00]
-    - Mode: 0x01=Steady, 0x02=Neon
+    - Hardware mode: 0x01=Steady, 0x02=Respiration, 0x03=Neon
     - ModeChk = (0x55 - Mode) & 0xFF
     - ColorChk = (0x55 - (R + G + B)) & 0xFF
     - B1 = brightness * 3, B2 = (0x55 - B1) & 0xFF
     
-    Breathing (offset 0x5C):
-    [00, 00, 5C, 02, 03, 52, 00, 00, 00, 00, 00, 00, 00, 00]
-    - Uses fixed format, no color selection (cycles through colors)
-    
     Off (offset 0x58):
     [00, 00, 58, 02, 00, 55, 00, 00, 00, 00, 00, 00, 00, 00]
+
+    Animated modes also need the speed record at 0x5C; callers applying a
+    complete effect should use :func:`build_rgb_packets`.
     """
     r = max(0, min(255, r))
     g = max(0, min(255, g))
@@ -622,14 +664,8 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
             0x00, 0x00, 0x58, 0x02, 0x00, 0x55,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
         ])
-    elif mode == RGB_MODE_BREATHING:
-        # Breathing mode uses special packet at offset 0x5C
-        payload = bytes([
-            0x00, 0x00, 0x5C, 0x02, 0x03, 0x52,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-        ])
     else:
-        # Steady (0x01) or Neon (0x02) mode at offset 0x54
+        # All enabled modes store their color/mode/brightness at offset 0x54.
         # Calculate Color Checksum
         color_sum = (r + g + b) & 0xFF
         color_chk = (0x55 - color_sum) & 0xFF
@@ -638,9 +674,7 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
         b1 = max(1, min(255, int(brightness * 3)))
         b2 = (0x55 - b1) & 0xFF
         
-        # For Neon, use mode 0x02; for Steady, use mode 0x01.  The following
-        # byte is its 0x55 complement (0x53 for Neon, 0x54 for Steady).
-        hw_mode = 0x02 if mode == RGB_MODE_NEON else 0x01
+        hw_mode = rgb_mode_to_hardware(mode)
         mode_chk = (0x55 - hw_mode) & 0xFF
         
         payload = bytes([
@@ -652,7 +686,7 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
             g,
             b,
             color_chk,  # Checksum for color
-            hw_mode,    # Hardware mode (0x01=Steady, 0x02=Neon)
+            hw_mode,    # 0x01=Steady, 0x02=Respiration, 0x03=Neon
             mode_chk,
             b1,         # Brightness value
             b2,         # Brightness complement
@@ -661,6 +695,29 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
         ])
     
     return build_report(0x07, payload)
+
+
+def build_rgb_effect_speed(speed: int = RGB_EFFECT_SPEED_DEFAULT) -> bytes:
+    """Build the captured Areson animation-speed record at offset 0x005C."""
+    if not RGB_EFFECT_SPEED_MIN <= speed <= RGB_EFFECT_SPEED_MAX:
+        raise ValueError(
+            f"effect speed must be {RGB_EFFECT_SPEED_MIN}..{RGB_EFFECT_SPEED_MAX}")
+    payload = bytes([
+        0x00, 0x00, 0x5C, 0x02, speed, (0x55 - speed) & 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ])
+    return build_report(CMD_WRITE, payload)
+
+
+def build_rgb_packets(r: int, g: int, b: int,
+                      mode: int = RGB_MODE_STEADY,
+                      brightness: int = 100,
+                      effect_speed: int = RGB_EFFECT_SPEED_DEFAULT) -> list[bytes]:
+    """Build every EEPROM record required to apply one lighting effect."""
+    primary = build_rgb(r, g, b, mode, brightness)
+    if mode in (RGB_MODE_BREATHING, RGB_MODE_NEON):
+        return [primary, build_rgb_effect_speed(effect_speed)]
+    return [primary]
 
 
 def battery_gradient_rgb(percent: int) -> tuple[int, int, int]:
@@ -672,11 +729,11 @@ def battery_gradient_rgb(percent: int) -> tuple[int, int, int]:
 
 
 def build_battery_indicator_rgb(percent: int) -> bytes:
-    """Build a steady battery-color write at the capture-confirmed minimum brightness."""
+    """Build a dim steady battery color with reliable mixed-channel output."""
     return build_rgb(
         *battery_gradient_rgb(percent),
         mode=RGB_MODE_STEADY,
-        brightness=RGB_MIN_BRIGHTNESS,
+        brightness=BATTERY_LED_BRIGHTNESS,
     )
 
 
@@ -1310,9 +1367,10 @@ class VenusDevice:
         raise ProtocolTimeout(f"command 0x{command:02x} timed out{suffix}")
 
     def send_reliable(self, report: bytes, timeout_ms: int = 500) -> bool:
-        """Compatibility boolean wrapper around :meth:`exchange`."""
+        """Exchange one report and leave the capture-backed firmware gap."""
         try:
             self.exchange(report, timeout_ms)
+            time.sleep(REPORT_SETTLE_SECONDS)
             self.last_error = ""
             return True
         except Exception as exc:
@@ -1342,7 +1400,10 @@ class VenusDevice:
 
     def begin_write(self) -> bool:
         """Request ready state before one or more immediately-persistent writes."""
-        return self.ready()
+        accepted = self.ready()
+        if accepted:
+            time.sleep(REPORT_SETTLE_SECONDS)
+        return accepted
 
     def unlock(self) -> bool:
         """Deprecated safe alias for :meth:`start_session`."""
