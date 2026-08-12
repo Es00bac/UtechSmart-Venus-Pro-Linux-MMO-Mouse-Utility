@@ -11,7 +11,7 @@ from unittest import mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PyQt6 import QtWidgets
+    from PyQt6 import QtCore, QtGui, QtWidgets
 
     import venus_gui as gui
     import venus_protocol as vp
@@ -92,6 +92,97 @@ class MacroEditorTests(unittest.TestCase):
         )
         self.assertIn("[Left click]", self.window.macro_preview_label.text())
         self.assertNotIn("still pressed", self.window.macro_preview_label.text())
+
+    def test_manual_builder_exposes_every_hardware_modifier(self):
+        modifier_items = {}
+        for index in range(self.window.add_key_combo.count()):
+            event_data = self.window.add_key_combo.itemData(index)
+            if event_data and event_data[0] == "modifier":
+                modifier_items[self.window.add_key_combo.itemText(index)] = (
+                    event_data[1])
+
+        self.assertEqual(
+            modifier_items,
+            {
+                f"Modifier: {name}": code
+                for name, code in vp.MACRO_MODIFIER_CODES.items()
+            },
+        )
+
+    def test_recording_ctrl_c_keeps_modifier_press_and_release(self):
+        self.window._toggle_recording(True)
+        events = (
+            QtGui.QKeyEvent(
+                QtCore.QEvent.Type.KeyPress,
+                QtCore.Qt.Key.Key_Control,
+                QtCore.Qt.KeyboardModifier.ControlModifier,
+            ),
+            QtGui.QKeyEvent(
+                QtCore.QEvent.Type.KeyPress,
+                QtCore.Qt.Key.Key_C,
+                QtCore.Qt.KeyboardModifier.ControlModifier,
+                "c",
+            ),
+            QtGui.QKeyEvent(
+                QtCore.QEvent.Type.KeyRelease,
+                QtCore.Qt.Key.Key_C,
+                QtCore.Qt.KeyboardModifier.ControlModifier,
+                "c",
+            ),
+            QtGui.QKeyEvent(
+                QtCore.QEvent.Type.KeyRelease,
+                QtCore.Qt.Key.Key_Control,
+                QtCore.Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+        for event in events:
+            self.assertTrue(self.window.eventFilter(self.window, event))
+        self.window._stop_recording()
+
+        recorded = self.window._get_macro_events_from_table()
+        self.assertEqual(
+            [(event.keycode, event.is_down, event.is_modifier)
+             for event in recorded],
+            [
+                (vp.MACRO_MODIFIER_CODES["Left Ctrl"], True, True),
+                (vp.HID_KEY_USAGE["C"], True, False),
+                (vp.HID_KEY_USAGE["C"], False, False),
+                (vp.MACRO_MODIFIER_CODES["Left Ctrl"], False, True),
+            ],
+        )
+        self.assertIn("[Left Ctrl+C]", self.window.macro_preview_label.text())
+        self.assertNotIn("still pressed", self.window.macro_preview_label.text())
+
+    def test_alt_meta_and_shift_are_recorded_as_modifier_events(self):
+        cases = (
+            (QtCore.Qt.Key.Key_Alt, "Left Alt"),
+            (QtCore.Qt.Key.Key_Meta, "GUI"),
+            (QtCore.Qt.Key.Key_Shift, "Left Shift"),
+        )
+        for qt_key, expected_name in cases:
+            key_event = QtGui.QKeyEvent(
+                QtCore.QEvent.Type.KeyPress,
+                qt_key,
+                QtCore.Qt.KeyboardModifier.NoModifier,
+            )
+            self.assertEqual(
+                self.window._qt_key_to_macro_modifier(key_event),
+                (expected_name, vp.MACRO_MODIFIER_CODES[expected_name]),
+            )
+
+    def test_native_right_modifier_metadata_selects_right_code(self):
+        right_ctrl = QtGui.QKeyEvent(
+            QtCore.QEvent.Type.KeyPress,
+            QtCore.Qt.Key.Key_Control,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+            105,
+            0xFFE4,
+            0,
+        )
+        self.assertEqual(
+            self.window._qt_key_to_macro_modifier(right_ctrl),
+            ("Right Ctrl", vp.MACRO_MODIFIER_CODES["Right Ctrl"]),
+        )
 
     def test_press_only_is_boolean_and_warns_when_unreleased(self):
         self.window.add_action_combo.setCurrentIndex(

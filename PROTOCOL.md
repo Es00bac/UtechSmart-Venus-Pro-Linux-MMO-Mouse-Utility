@@ -299,6 +299,24 @@ encode class:
 | `81/41` | keyboard |
 | `84/44` | mouse button |
 
+The macro modifier code is a vendor key code, not the standard HID modifier
+bit used in the separate event-definition area:
+
+| Macro code | Modifier |
+|---:|---|
+| `01` | Left Ctrl |
+| `02` | Left Shift |
+| `04` | Left Alt |
+| `08` | Left or right GUI/Super |
+| `10` | Right Ctrl |
+| `20` | Right Shift |
+| `40` | Right Alt |
+
+These values come directly from both conversion directions in the Windows
+driver (`StMacro_To_HdMacro` and `HdMacro_To_StMacro`). The GUI/Super keys are
+intentionally collapsed by that converter; the other modifiers retain their
+left/right identity. **Binary**
+
 Mouse event codes use the same `01/02/04/08/10` button masks. The bundled UI
 enables the first three through `MacroHasMsKey=0x07`; the converter itself also
 recognizes back and forward. It rejects other event classes, and the fixed
@@ -322,9 +340,11 @@ sample each gap from a user-selected range, then stores those sampled values as
 ordinary fixed event delays. Randomness is not a firmware playback feature.
 
 US-layout unshifted characters consume two events. Shifted characters consume
-four and use modifier event code `20`, the value seen in captured macro data.
-The editor rejects unsupported text or output above 69 events before writing.
-**Capture-backed serialization; builder timing policy**
+four. The text builder retains modifier event code `20` (Right Shift) to match
+captured vendor output, while the recorder and manual editor accept every code
+in the table above. The editor rejects unsupported text or output above 69
+events before writing. **Capture-backed serialization, Binary; builder timing
+policy**
 
 Macro action repeat byte:
 
