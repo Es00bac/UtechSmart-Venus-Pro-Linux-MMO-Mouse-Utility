@@ -161,7 +161,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Venus Pro Config")
-        self.resize(1200, 780)
+        self.resize(1400, 850)
         
         # Set Application Icon
         icon_path = Path(__file__).parent / "icon.png"
@@ -178,6 +178,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_infos: list[vp.DeviceInfo] = []
         self.device_type: str = 'venus_pro'  # 'venus_pro' or 'holtek'
         self.holtek_profile: int = 0  # 0-4, selected hardware profile for Holtek device
+        self.holtek_dpi_colors: list[int] = []
         self.active_button_profiles: dict = vp.BUTTON_PROFILES
         self.custom_profiles: dict[str, tuple[int, int, int]] = {}
         self.button_assignments: dict[str, dict] = {} # Stored button settings from device
@@ -303,7 +304,11 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Factory Reset button
         self.reset_button = QtWidgets.QPushButton("⚠️ Factory Reset")
-        self.reset_button.setStyleSheet("background-color: #cc4444; color: white; font-weight: bold; padding: 8px;")
+        self.reset_button.setStyleSheet(
+            "QPushButton { background-color: #cc4444; color: white; "
+            "font-weight: bold; padding: 8px; }"
+            "QPushButton:disabled { background-color: palette(mid); "
+            "color: palette(disabled-text); }")
         self.reset_button.clicked.connect(self._factory_reset)
         layout.addWidget(self.reset_button)
 
@@ -320,6 +325,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._build_polling_tab(), "Polling")
         tabs.addTab(self._build_dpi_tab(), "DPI")
         tabs.addTab(self._build_advanced_tab(), "Advanced")
+        self.tabs = tabs
         return tabs
 
     def _build_buttons_tab(self) -> QtWidgets.QWidget:
@@ -426,6 +432,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.special_key_combo.addItem(key_name, key_name)
         self.special_key_combo.currentIndexChanged.connect(self._on_special_key_select)
         self.key_select.keyChanged.connect(self._clear_special_key_selection)
+        self.modifier_label = QtWidgets.QLabel("Modifiers:")
         self.mod_ctrl = QtWidgets.QCheckBox("Ctrl")
         self.mod_shift = QtWidgets.QCheckBox("Shift")
         self.mod_alt = QtWidgets.QCheckBox("Alt")
@@ -438,7 +445,7 @@ class MainWindow(QtWidgets.QMainWindow):
         key_group_layout.addWidget(self.key_select)
         key_group_layout.addWidget(QtWidgets.QLabel("Special Keys:"))
         key_group_layout.addWidget(self.special_key_combo)
-        key_group_layout.addWidget(QtWidgets.QLabel("Modifiers:"))
+        key_group_layout.addWidget(self.modifier_label)
         key_group_layout.addLayout(mod_layout)
         
         # 2. Macro
@@ -464,31 +471,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.macro_repeat_combo.currentIndexChanged.connect(
             lambda: self.macro_repeat_count.setVisible(self.macro_repeat_combo.currentData() == 0x02)
         )
+        self.macro_repeat_count.valueChanged.connect(self._auto_stage_binding)
 
         # Macro Recall
         self.load_macro_btn = QtWidgets.QPushButton("Load from Slot")
         self.load_macro_btn.clicked.connect(self._load_macro_from_slot)
         macro_layout.addRow("Recall:", self.load_macro_btn)
-        
-        # Quick Text Group inside Macro layout
-        quick_group = QtWidgets.QGroupBox("Quick Text Macro")
-        quick_layout = QtWidgets.QVBoxLayout(quick_group)
-        self.quick_text_edit = QtWidgets.QLineEdit()
-        self.quick_text_edit.setPlaceholderText("Enter text here (max ~35 chars)")
-        quick_hbox = QtWidgets.QHBoxLayout()
-        quick_hbox.addWidget(QtWidgets.QLabel("Delay:"))
-        self.quick_delay_spin = QtWidgets.QSpinBox()
-        self.quick_delay_spin.setRange(1, 255); self.quick_delay_spin.setValue(10); self.quick_delay_spin.setSuffix(" ms")
-        quick_hbox.addWidget(self.quick_delay_spin)
-        self.gen_text_btn = QtWidgets.QPushButton("Generate Events")
-        self.gen_text_btn.clicked.connect(self._generate_text_macro)
-        quick_hbox.addWidget(self.gen_text_btn)
-        
-        quick_layout.addWidget(self.quick_text_edit)
-        quick_layout.addLayout(quick_hbox)
-        
-        macro_layout.addRow(quick_group)
-
         
         # 3. Special
         self.special_group = QtWidgets.QWidget()
@@ -497,7 +485,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.special_delay_spin.setRange(0, 255); self.special_delay_spin.setValue(40); self.special_delay_spin.setSuffix(" ms")
         self.special_repeat_spin = QtWidgets.QSpinBox()
         self.special_repeat_spin.setRange(0, 255); self.special_repeat_spin.setValue(3)
-        special_layout.addWidget(QtWidgets.QLabel("Delay:")); special_layout.addWidget(self.special_delay_spin)
+        self.special_delay_label = QtWidgets.QLabel("Delay:")
+        special_layout.addWidget(self.special_delay_label); special_layout.addWidget(self.special_delay_spin)
         special_layout.addWidget(QtWidgets.QLabel("Repeats:")); special_layout.addWidget(self.special_repeat_spin)
 
         # 4. Media
@@ -536,13 +525,21 @@ class MainWindow(QtWidgets.QMainWindow):
         batch_layout = QtWidgets.QHBoxLayout(batch_group)
         
         self.apply_all_button = QtWidgets.QPushButton("Apply All Changes")
-        self.apply_all_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px;")
+        self.apply_all_button.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; "
+            "font-weight: bold; padding: 5px; }"
+            "QPushButton:disabled { background-color: palette(mid); "
+            "color: palette(disabled-text); }")
         self.apply_all_button.setToolTip("Write all staged changes to the device memory.")
         self.apply_all_button.clicked.connect(self._commit_staged_changes)
         self.apply_all_button.setEnabled(False) # Default disabled
         
         self.discard_all_button = QtWidgets.QPushButton("Discard All")
-        self.discard_all_button.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 5px;")
+        self.discard_all_button.setStyleSheet(
+            "QPushButton { background-color: #f44336; color: white; "
+            "font-weight: bold; padding: 5px; }"
+            "QPushButton:disabled { background-color: palette(mid); "
+            "color: palette(disabled-text); }")
         self.discard_all_button.setToolTip("Clear all pending changes and revert to current device state.")
         self.discard_all_button.clicked.connect(self._discard_staged_changes)
         self.discard_all_button.setEnabled(False)
@@ -585,6 +582,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.special_delay_spin.valueChanged.connect(self._auto_stage_binding)
         self.special_repeat_spin.valueChanged.connect(self._auto_stage_binding)
 
+        # All supported controls have fixed protocol offsets. Keep the old
+        # raw-offset widgets available to the implementation, but do not show
+        # a non-functional custom-offset editor in the normal interface.
+        self.advanced_group.setVisible(False)
+        self._update_bind_ui(self.action_select.currentText())
+        self.right_panel_enabled(False)
+
         splitter.addWidget(left_widget)
         splitter.addWidget(right_widget)
         splitter.setStretchFactor(0, 1)
@@ -603,10 +607,6 @@ class MainWindow(QtWidgets.QMainWindow):
         row = rows[0].row()
         key = self.btn_table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
         label = self.btn_table.item(row, 0).text()
-        
-        # Auto-stage the current button's binding before switching to a new button
-        if self.current_edit_key and self.current_edit_key != key:
-            self._apply_button_binding()
         
         self.editor_label.setText(f"Editing: {label}")
         self.current_edit_key = key # Store for apply
@@ -664,9 +664,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def right_panel_enabled(self, enabled: bool) -> None:
-        self.action_select.setEnabled(enabled)
-        self.apply_button.setEnabled(enabled)
-        # Also disable groups?
+        for widget in (
+                self.action_select, self.key_group, self.macro_group,
+                self.special_group, self.media_group, self.dpi_group,
+                self.apply_button):
+            widget.setEnabled(enabled)
         
     def _update_ui_from_assignment(self, button_key: str) -> None:
         """Update editor UI from effective assignment (staged if pending, else base)."""
@@ -686,12 +688,18 @@ class MainWindow(QtWidgets.QMainWindow):
         params = assign["params"]
         
         self.action_select.blockSignals(True)
-        # No mapping needed
-
-        
+        for item_index in reversed(range(self.action_select.count())):
+            if (self.action_select.itemData(item_index)
+                    == "__preserve_unknown__"):
+                self.action_select.removeItem(item_index)
         idx = self.action_select.findText(action)
-        if idx >= 0: self.action_select.setCurrentIndex(idx)
-        else: self.action_select.setCurrentIndex(self.action_select.findText("Disabled")) # Fallback
+        if idx >= 0:
+            self.action_select.setCurrentIndex(idx)
+        else:
+            self.action_select.addItem(
+                f"Unsupported: {action} (choose a replacement)",
+                "__preserve_unknown__")
+            self.action_select.setCurrentIndex(self.action_select.count() - 1)
         
         self._update_bind_ui(self.action_select.currentText())
         self.action_select.blockSignals(False)
@@ -835,213 +843,380 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log(f"Config: Failed to save settings: {exc}")
 
     def _build_macros_tab(self) -> QtWidgets.QWidget:
-        """Build the visual macro editor tab with event list, recording, and preview."""
+        """Build the slot-oriented macro editor and text/timing tools."""
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        
-        # --- LEFT: Macro List ---
+
+        # Device slots remain visible while the editor changes.  Selecting a
+        # slot is local and instant; loading hardware is an explicit action.
         left_widget = QtWidgets.QWidget()
         left_layout = QtWidgets.QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        
-        left_layout.addWidget(QtWidgets.QLabel("Stored Macros (Local Names):"))
+
+        slot_label = QtWidgets.QLabel("Macro slots")
+        slot_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        left_layout.addWidget(slot_label)
         self.macro_list = QtWidgets.QListWidget()
-        self.macro_list.itemClicked.connect(self._load_macro_from_slot_selection)
+        self.macro_list.setAlternatingRowColors(True)
+        self.macro_list.itemSelectionChanged.connect(self._select_macro_slot)
+        self.macro_list.itemDoubleClicked.connect(
+            self._load_macro_from_slot_selection)
         left_layout.addWidget(self.macro_list)
-        
+        slot_hint = QtWidgets.QLabel(
+            "Select a target; double-click to load it from the mouse.")
+        slot_hint.setWordWrap(True)
+        slot_hint.setStyleSheet("color: palette(mid);")
+        left_layout.addWidget(slot_hint)
+
         self._refresh_macro_list()
-        
-        left_widget.setLayout(left_layout)
         splitter.addWidget(left_widget)
 
-        # --- RIGHT: Editor ---
         right_widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(right_widget)
-        # layout.setContentsMargins(10, 0, 0, 0) # Already handled by splitter mostly
+        layout.setContentsMargins(10, 0, 0, 0)
 
-        # --- Macro Name ---
-        name_layout = QtWidgets.QHBoxLayout()
-        name_layout.addWidget(QtWidgets.QLabel("Macro Name:"))
+        header_layout = QtWidgets.QGridLayout()
+        header_layout.addWidget(QtWidgets.QLabel("Slot:"), 0, 0)
+        self.macro_bind_index_spin = QtWidgets.QSpinBox()
+        self.macro_bind_index_spin.setRange(1, 16)
+        self.macro_bind_index_spin.setValue(1)
+        self.macro_bind_index_spin.valueChanged.connect(
+            self._macro_slot_spin_changed)
+        header_layout.addWidget(self.macro_bind_index_spin, 0, 1)
+        header_layout.addWidget(QtWidgets.QLabel("Name:"), 0, 2)
         self.macro_name_edit = QtWidgets.QLineEdit("Macro 1")
-        name_layout.addWidget(self.macro_name_edit, stretch=1)
-        layout.addLayout(name_layout)
+        self.macro_name_edit.setMaxLength(15)
+        self.macro_name_edit.setToolTip(
+            "The mouse stores up to 15 UTF-16 code units in a macro name.")
+        header_layout.addWidget(self.macro_name_edit, 0, 3, 1, 3)
+        self.load_slot_button = QtWidgets.QPushButton("Load from Mouse")
+        self.load_slot_button.clicked.connect(self._load_macro_from_slot_on_tab)
+        header_layout.addWidget(self.load_slot_button, 0, 6)
+        self.save_macro_button = QtWidgets.QPushButton("Save to Mouse")
+        self.save_macro_button.setStyleSheet(
+            "font-weight: bold; padding: 6px; background-color: #397d43;")
+        self.save_macro_button.clicked.connect(self._save_current_macro)
+        header_layout.addWidget(self.save_macro_button, 0, 7)
+        header_layout.setColumnStretch(3, 1)
+        layout.addLayout(header_layout)
 
-        # --- Recording Controls ---
-        record_layout = QtWidgets.QHBoxLayout()
+        toolbar = QtWidgets.QHBoxLayout()
         self.record_button = QtWidgets.QPushButton("🔴 Record")
         self.record_button.setCheckable(True)
-        self.record_button.setStyleSheet("QPushButton:checked { background-color: #ff4444; color: white; }")
+        self.record_button.setStyleSheet(
+            "QPushButton:checked { background-color: #b3261e; color: white; }")
         self.record_button.toggled.connect(self._toggle_recording)
         self.stop_record_button = QtWidgets.QPushButton("⏹ Stop")
         self.stop_record_button.setEnabled(False)
         self.stop_record_button.clicked.connect(self._stop_recording)
+        self.move_up_button = QtWidgets.QPushButton("▲")
+        self.move_up_button.setToolTip("Move selected event up (Alt+Up)")
+        self.move_up_button.clicked.connect(self._move_event_up)
+        self.move_down_button = QtWidgets.QPushButton("▼")
+        self.move_down_button.setToolTip("Move selected event down (Alt+Down)")
+        self.move_down_button.clicked.connect(self._move_event_down)
+        self.duplicate_event_button = QtWidgets.QPushButton("Duplicate")
+        self.duplicate_event_button.clicked.connect(self._duplicate_selected_event)
+        self.delete_events_button = QtWidgets.QPushButton("Delete Selected")
+        self.delete_events_button.clicked.connect(self._delete_selected_events)
         self.clear_events_button = QtWidgets.QPushButton("Clear All")
         self.clear_events_button.clicked.connect(self._clear_macro_events)
 
-        record_layout.addWidget(self.record_button)
-        record_layout.addWidget(self.stop_record_button)
-        record_layout.addWidget(self.clear_events_button)
-        record_layout.addStretch()
-        layout.addLayout(record_layout)
+        for widget in (
+                self.record_button, self.stop_record_button,
+                self.move_up_button, self.move_down_button,
+                self.duplicate_event_button, self.delete_events_button,
+                self.clear_events_button):
+            toolbar.addWidget(widget)
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
 
-        # Recording state
         self._recording = False
         self._last_key_time: float = 0.0
 
-        # --- Event Table ---
-        layout.addWidget(QtWidgets.QLabel("Events:"))
         self.macro_event_table = QtWidgets.QTableWidget()
         self.macro_event_table.setColumnCount(5)
-        self.macro_event_table.setHorizontalHeaderLabels(["#", "Key", "Action", "Delay (ms)", ""])
-        self.macro_event_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.macro_event_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        self.macro_event_table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.macro_event_table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.macro_event_table.horizontalHeader().setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        self.macro_event_table.setHorizontalHeaderLabels(
+            ["#", "Event", "Action", "Delay after", ""])
+        header = self.macro_event_table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)
         self.macro_event_table.setColumnWidth(0, 35)
-        self.macro_event_table.setColumnWidth(2, 70)
-        self.macro_event_table.setColumnWidth(3, 80)
-        self.macro_event_table.setColumnWidth(4, 80)
-        self.macro_event_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.macro_event_table.setMinimumHeight(200)
-        layout.addWidget(self.macro_event_table)
+        self.macro_event_table.setColumnWidth(2, 75)
+        self.macro_event_table.setColumnWidth(3, 105)
+        self.macro_event_table.setColumnWidth(4, 38)
+        self.macro_event_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.macro_event_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.macro_event_table.setAlternatingRowColors(True)
+        self.macro_event_table.verticalHeader().setVisible(False)
+        self.macro_event_table.setMinimumHeight(230)
+        layout.addWidget(self.macro_event_table, stretch=3)
 
-        # Move Up/Down buttons
-        move_layout = QtWidgets.QHBoxLayout()
-        self.move_up_button = QtWidgets.QPushButton("▲ Move Up")
-        self.move_up_button.clicked.connect(self._move_event_up)
-        self.move_down_button = QtWidgets.QPushButton("▼ Move Down")
-        self.move_down_button.clicked.connect(self._move_event_down)
-        move_layout.addWidget(self.move_up_button)
-        move_layout.addWidget(self.move_down_button)
-        move_layout.addStretch()
-        layout.addLayout(move_layout)
+        self.macro_capacity_bar = QtWidgets.QProgressBar()
+        self.macro_capacity_bar.setRange(0, vp.MACRO_MAX_EVENTS)
+        self.macro_capacity_bar.setValue(0)
+        self.macro_capacity_bar.setFormat(
+            f"%v / {vp.MACRO_MAX_EVENTS} hardware events")
+        layout.addWidget(self.macro_capacity_bar)
 
-        # --- Manual Add Event ---
-        add_group = QtWidgets.QGroupBox("Add Event Manually")
-        add_layout = QtWidgets.QHBoxLayout(add_group)
+        builder_tabs = QtWidgets.QTabWidget()
+        self.macro_builder_tabs = builder_tabs
 
-        add_layout.addWidget(QtWidgets.QLabel("Key:"))
+        text_builder = QtWidgets.QWidget()
+        text_layout = QtWidgets.QGridLayout(text_builder)
+        self.quick_text_edit = QtWidgets.QPlainTextEdit()
+        self.quick_text_edit.setPlaceholderText(
+            "Type text to convert into hardware key presses (US keyboard layout)…")
+        self.quick_text_edit.setMaximumHeight(72)
+        self.quick_text_edit.textChanged.connect(
+            self._update_text_macro_requirements)
+        text_layout.addWidget(self.quick_text_edit, 0, 0, 1, 8)
+
+        text_layout.addWidget(QtWidgets.QLabel("Timing:"), 1, 0)
+        self.text_timing_mode = QtWidgets.QComboBox()
+        self.text_timing_mode.addItem("Fixed", "fixed")
+        self.text_timing_mode.addItem("Random range", "random")
+        self.text_timing_mode.currentIndexChanged.connect(
+            self._sync_text_timing_controls)
+        text_layout.addWidget(self.text_timing_mode, 1, 1)
+
+        text_layout.addWidget(QtWidgets.QLabel("Key held:"), 1, 2)
+        self.text_hold_spin = QtWidgets.QSpinBox()
+        self.text_hold_spin.setRange(vp.MACRO_MIN_DELAY_MS, 0xFFFF)
+        self.text_hold_spin.setValue(35)
+        self.text_hold_spin.setSuffix(" ms")
+        self.text_hold_spin.valueChanged.connect(
+            self._update_text_macro_requirements)
+        text_layout.addWidget(self.text_hold_spin, 1, 3)
+
+        self.text_fixed_delay_label = QtWidgets.QLabel("Between keys:")
+        text_layout.addWidget(self.text_fixed_delay_label, 1, 4)
+        self.text_fixed_delay_spin = QtWidgets.QSpinBox()
+        self.text_fixed_delay_spin.setRange(vp.MACRO_MIN_DELAY_MS, 0xFFFF)
+        self.text_fixed_delay_spin.setValue(90)
+        self.text_fixed_delay_spin.setSuffix(" ms")
+        self.text_fixed_delay_spin.valueChanged.connect(
+            self._update_text_macro_requirements)
+        text_layout.addWidget(self.text_fixed_delay_spin, 1, 5)
+
+        self.text_random_range_widget = QtWidgets.QWidget()
+        random_layout = QtWidgets.QHBoxLayout(self.text_random_range_widget)
+        random_layout.setContentsMargins(0, 0, 0, 0)
+        random_layout.addWidget(QtWidgets.QLabel("Between:"))
+        self.text_random_min_spin = QtWidgets.QSpinBox()
+        self.text_random_min_spin.setRange(vp.MACRO_MIN_DELAY_MS, 0xFFFF)
+        self.text_random_min_spin.setValue(70)
+        self.text_random_min_spin.setSuffix(" ms")
+        self.text_random_min_spin.valueChanged.connect(
+            self._update_text_macro_requirements)
+        random_layout.addWidget(self.text_random_min_spin)
+        random_layout.addWidget(QtWidgets.QLabel("to"))
+        self.text_random_max_spin = QtWidgets.QSpinBox()
+        self.text_random_max_spin.setRange(vp.MACRO_MIN_DELAY_MS, 0xFFFF)
+        self.text_random_max_spin.setValue(160)
+        self.text_random_max_spin.setSuffix(" ms")
+        self.text_random_max_spin.valueChanged.connect(
+            self._update_text_macro_requirements)
+        random_layout.addWidget(self.text_random_max_spin)
+        text_layout.addWidget(self.text_random_range_widget, 1, 4, 1, 2)
+
+        text_layout.addWidget(QtWidgets.QLabel("Extra after spaces:"), 2, 0)
+        self.text_word_pause_spin = QtWidgets.QSpinBox()
+        self.text_word_pause_spin.setRange(0, 0xFFFF)
+        self.text_word_pause_spin.setValue(60)
+        self.text_word_pause_spin.setSuffix(" ms")
+        self.text_word_pause_spin.valueChanged.connect(
+            self._update_text_macro_requirements)
+        text_layout.addWidget(self.text_word_pause_spin, 2, 1)
+        text_layout.addWidget(QtWidgets.QLabel("Output:"), 2, 2)
+        self.text_output_mode = QtWidgets.QComboBox()
+        self.text_output_mode.addItem("Replace current events", "replace")
+        self.text_output_mode.addItem("Append to current events", "append")
+        self.text_output_mode.currentIndexChanged.connect(
+            self._update_text_macro_requirements)
+        text_layout.addWidget(self.text_output_mode, 2, 3, 1, 2)
+
+        self.gen_text_btn = QtWidgets.QPushButton("Generate Text Events")
+        self.gen_text_btn.setStyleSheet("font-weight: bold;")
+        self.gen_text_btn.clicked.connect(self._generate_text_macro)
+        text_layout.addWidget(self.gen_text_btn, 2, 5, 1, 3)
+        self.text_builder_status = QtWidgets.QLabel()
+        self.text_builder_status.setWordWrap(True)
+        text_layout.addWidget(self.text_builder_status, 3, 0, 1, 8)
+        builder_tabs.addTab(text_builder, "Text Builder")
+
+        manual_builder = QtWidgets.QWidget()
+        add_layout = QtWidgets.QGridLayout(manual_builder)
+        add_layout.addWidget(QtWidgets.QLabel("Event:"), 0, 0)
         self.add_key_combo = QtWidgets.QComboBox()
         self.add_key_combo.addItem("Mouse: Left Button", ("mouse", 0x01))
         self.add_key_combo.addItem("Mouse: Right Button", ("mouse", 0x02))
         self.add_key_combo.addItem("Mouse: Middle Button", ("mouse", 0x04))
+        self.add_key_combo.addItem("Mouse: Back Button", ("mouse", 0x08))
+        self.add_key_combo.addItem("Mouse: Forward Button", ("mouse", 0x10))
+        self.add_key_combo.addItem(
+            "Modifier: Shift", ("modifier", vp.MACRO_SHIFT_CODE))
         self.add_key_combo.insertSeparator(self.add_key_combo.count())
-        for key_name in sorted(vp.HID_KEY_USAGE.keys(), key=lambda x: (len(x) > 1, x)):
-            self.add_key_combo.addItem(key_name, ("keyboard", vp.HID_KEY_USAGE[key_name]))
-        add_layout.addWidget(self.add_key_combo)
+        manual_keys = sorted(
+            ((name, code) for code, name in self.HID_USAGE_TO_NAME.items()
+             if code < 0xE0 and name != "Shift"),
+            key=lambda item: (len(item[0]) > 1, item[0]),
+        )
+        for key_name, keycode in manual_keys:
+            self.add_key_combo.addItem(key_name, ("keyboard", keycode))
+        add_layout.addWidget(self.add_key_combo, 0, 1, 1, 3)
 
-        add_layout.addWidget(QtWidgets.QLabel("Action:"))
+        add_layout.addWidget(QtWidgets.QLabel("Action:"), 0, 4)
         self.add_action_combo = QtWidgets.QComboBox()
-        self.add_action_combo.addItem("Press", True)
-        self.add_action_combo.addItem("Release", False)
-        add_layout.addWidget(self.add_action_combo)
+        self.add_action_combo.addItem("Tap (press + release)", "tap")
+        self.add_action_combo.addItem("Press only", "press")
+        self.add_action_combo.addItem("Release only", "release")
+        self.add_action_combo.currentIndexChanged.connect(
+            self._sync_manual_event_controls)
+        add_layout.addWidget(self.add_action_combo, 0, 5)
 
-        add_layout.addWidget(QtWidgets.QLabel("Delay:"))
+        self.add_hold_label = QtWidgets.QLabel("Held:")
+        add_layout.addWidget(self.add_hold_label, 1, 0)
+        self.add_hold_spin = QtWidgets.QSpinBox()
+        self.add_hold_spin.setRange(vp.MACRO_MIN_DELAY_MS, 0xFFFF)
+        self.add_hold_spin.setValue(35)
+        self.add_hold_spin.setSuffix(" ms")
+        add_layout.addWidget(self.add_hold_spin, 1, 1)
+        add_layout.addWidget(QtWidgets.QLabel("Delay after:"), 1, 2)
         self.add_delay_spin = QtWidgets.QSpinBox()
-        self.add_delay_spin.setRange(0, 5000)
-        self.add_delay_spin.setValue(50)
+        self.add_delay_spin.setRange(0, 0xFFFF)
+        self.add_delay_spin.setValue(90)
         self.add_delay_spin.setSuffix(" ms")
-        add_layout.addWidget(self.add_delay_spin)
+        add_layout.addWidget(self.add_delay_spin, 1, 3)
 
-        self.add_event_button = QtWidgets.QPushButton("Add")
+        self.add_event_button = QtWidgets.QPushButton("Add Event")
+        self.add_event_button.setStyleSheet("font-weight: bold;")
         self.add_event_button.clicked.connect(self._add_manual_event)
-        add_layout.addWidget(self.add_event_button)
+        add_layout.addWidget(self.add_event_button, 1, 4, 1, 2)
 
-        layout.addWidget(add_group)
+        add_layout.addWidget(QtWidgets.QLabel("Set selected delays:"), 2, 0)
+        self.selected_delay_spin = QtWidgets.QSpinBox()
+        self.selected_delay_spin.setRange(0, 0xFFFF)
+        self.selected_delay_spin.setValue(90)
+        self.selected_delay_spin.setSuffix(" ms")
+        add_layout.addWidget(self.selected_delay_spin, 2, 1)
+        self.apply_selected_delay_button = QtWidgets.QPushButton("Apply")
+        self.apply_selected_delay_button.clicked.connect(
+            self._apply_delay_to_selected)
+        add_layout.addWidget(self.apply_selected_delay_button, 2, 2)
+        manual_hint = QtWidgets.QLabel(
+            "A delay belongs to the event before it. Tap adds a matched press/release pair.")
+        manual_hint.setWordWrap(True)
+        manual_hint.setStyleSheet("color: palette(mid);")
+        add_layout.addWidget(manual_hint, 2, 3, 1, 3)
+        builder_tabs.addTab(manual_builder, "Manual Events")
 
-        # --- Preview ---
-        preview_group = QtWidgets.QGroupBox("Preview")
-        preview_layout = QtWidgets.QVBoxLayout(preview_group)
-        self.macro_preview_label = QtWidgets.QLabel('Output: "" (0 ms)')
+        builder_tabs.setMaximumHeight(225)
+        layout.addWidget(builder_tabs, stretch=1)
+
+        summary_layout = QtWidgets.QHBoxLayout()
+        self.macro_preview_label = QtWidgets.QLabel('Output: "" · 0 ms total')
         self.macro_preview_label.setStyleSheet("font-family: monospace; padding: 4px;")
-        preview_layout.addWidget(self.macro_preview_label)
-        layout.addWidget(preview_group)
+        self.macro_preview_label.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        summary_layout.addWidget(self.macro_preview_label, stretch=1)
+        layout.addLayout(summary_layout)
 
-        # --- Bind & Upload ---
-        bind_group = QtWidgets.QGroupBox("Upload && Bind")
+        bind_group = QtWidgets.QGroupBox("Bind saved slot to a mouse button")
         bind_layout = QtWidgets.QGridLayout(bind_group)
-
         bind_layout.addWidget(QtWidgets.QLabel("Bind to Button:"), 0, 0)
         self.macro_button_select = QtWidgets.QComboBox()
         for key, profile in vp.BUTTON_PROFILES.items():
             self.macro_button_select.addItem(profile.label, key)
         bind_layout.addWidget(self.macro_button_select, 0, 1)
-
-        bind_layout.addWidget(QtWidgets.QLabel("Macro Index:"), 0, 2)
-        self.macro_bind_index_spin = QtWidgets.QSpinBox()
-        self.macro_bind_index_spin.setRange(1, 16)
-        self.macro_bind_index_spin.setValue(1)
-        bind_layout.addWidget(self.macro_bind_index_spin, 0, 3)
-
-        bind_layout.addWidget(QtWidgets.QLabel("Repeat:"), 0, 4)
+        bind_layout.addWidget(QtWidgets.QLabel("Repeat:"), 0, 2)
         self.macro_tab_repeat_combo = QtWidgets.QComboBox()
         self.macro_tab_repeat_combo.addItem("Run Once", vp.MACRO_REPEAT_ONCE)
         self.macro_tab_repeat_combo.addItem("Repeat While Held", vp.MACRO_REPEAT_HOLD)
-        self.macro_tab_repeat_combo.addItem("Loop Until Key", vp.MACRO_REPEAT_TOGGLE)
-        self.macro_tab_repeat_combo.addItem("Repeat Count", vp.MACRO_REPEAT_COUNT) # New option
-        bind_layout.addWidget(self.macro_tab_repeat_combo, 0, 5)
+        self.macro_tab_repeat_combo.addItem("Toggle Loop", vp.MACRO_REPEAT_TOGGLE)
+        self.macro_tab_repeat_combo.addItem("Repeat Count", vp.MACRO_REPEAT_COUNT)
+        bind_layout.addWidget(self.macro_tab_repeat_combo, 0, 3)
 
-        bind_layout.addWidget(QtWidgets.QLabel("Repeat Count:"), 1, 0) # New row for repeat count
+        bind_layout.addWidget(QtWidgets.QLabel("Count:"), 0, 4)
         self.macro_tab_repeat_count_spin = QtWidgets.QSpinBox()
         self.macro_tab_repeat_count_spin.setRange(1, 253)
         self.macro_tab_repeat_count_spin.setValue(1)
-        self.macro_tab_repeat_count_spin.setEnabled(False) # Initially disabled
-        bind_layout.addWidget(self.macro_tab_repeat_count_spin, 1, 1)
-
-        # Connect repeat combo to enable/disable repeat count spinbox
+        self.macro_tab_repeat_count_spin.setEnabled(False)
+        bind_layout.addWidget(self.macro_tab_repeat_count_spin, 0, 5)
         self.macro_tab_repeat_combo.currentIndexChanged.connect(
             lambda: self.macro_tab_repeat_count_spin.setEnabled(self.macro_tab_repeat_combo.currentData() == vp.MACRO_REPEAT_COUNT)
         )
-
-        upload_button = QtWidgets.QPushButton("Upload Macro")
-        upload_button.clicked.connect(self._upload_macro)
-        bind_button = QtWidgets.QPushButton("Bind to Button")
-        bind_button.clicked.connect(self._bind_macro_to_button)
-        load_button = QtWidgets.QPushButton("Load from Device")
-        load_button.clicked.connect(self._load_macro_from_slot_on_tab)
-
-        bind_layout.addWidget(upload_button, 2, 0, 1, 2)
-        bind_layout.addWidget(bind_button, 2, 2, 1, 2)
-        bind_layout.addWidget(load_button, 2, 4, 1, 2)
-        
-        # Save Button (New)
-        save_button = QtWidgets.QPushButton("💾 Save Macro")
-        save_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 6px;")
-        save_button.setToolTip("Save macro to device and update local name.")
-        save_button.clicked.connect(self._save_current_macro)
-        bind_layout.addWidget(save_button, 3, 0, 1, 6) # Full width
+        self.bind_macro_button = QtWidgets.QPushButton("Bind Slot")
+        self.bind_macro_button.clicked.connect(self._bind_macro_to_button)
+        bind_layout.addWidget(self.bind_macro_button, 0, 6)
+        bind_layout.setColumnStretch(1, 1)
 
         layout.addWidget(bind_group)
-        layout.addStretch()
-        
-        right_widget.setLayout(layout)
         splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 1) # List
-        splitter.setStretchFactor(1, 2) # Editor
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 4)
+        splitter.setSizes([210, 850])
+
+        QtGui.QShortcut(QtGui.QKeySequence("Delete"), self.macro_event_table).activated.connect(
+            self._delete_selected_events)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+D"), self.macro_event_table).activated.connect(
+            self._duplicate_selected_event)
+        QtGui.QShortcut(QtGui.QKeySequence("Alt+Up"), self.macro_event_table).activated.connect(
+            self._move_event_up)
+        QtGui.QShortcut(QtGui.QKeySequence("Alt+Down"), self.macro_event_table).activated.connect(
+            self._move_event_down)
+
+        self._sync_text_timing_controls()
+        self._sync_manual_event_controls()
+        self._update_text_macro_requirements()
+        self._update_macro_preview()
+        self.macro_list.setCurrentRow(0)
 
         return splitter
 
     def _refresh_macro_list(self) -> None:
         """Refresh the macro list widget."""
+        selected = (self.macro_bind_index_spin.value()
+                    if hasattr(self, "macro_bind_index_spin") else 1)
         self.macro_list.clear()
         for i in range(1, 17):
             name = self.macro_names.get(i, f"Macro {i}")
             item = QtWidgets.QListWidgetItem(f"{i}: {name}")
             item.setData(QtCore.Qt.ItemDataRole.UserRole, i)
             self.macro_list.addItem(item)
+        if self.macro_list.count():
+            self.macro_list.setCurrentRow(max(0, min(15, selected - 1)))
+
+    def _select_macro_slot(
+            self, item: QtWidgets.QListWidgetItem | None = None) -> None:
+        """Select a local slot without performing surprise hardware I/O."""
+        item = item or self.macro_list.currentItem()
+        if item is None or not hasattr(self, "macro_bind_index_spin"):
+            return
+        index = int(item.data(QtCore.Qt.ItemDataRole.UserRole))
+        self.macro_bind_index_spin.blockSignals(True)
+        self.macro_bind_index_spin.setValue(index)
+        self.macro_bind_index_spin.blockSignals(False)
+        self.macro_name_edit.setText(
+            self.macro_names.get(index, f"Macro {index}"))
+
+    def _macro_slot_spin_changed(self, index: int) -> None:
+        """Keep the macro editor's slot list and name synchronized."""
+        if hasattr(self, "macro_list") and self.macro_list.count() >= index:
+            self.macro_list.blockSignals(True)
+            self.macro_list.setCurrentRow(index - 1)
+            self.macro_list.blockSignals(False)
+        self.macro_name_edit.setText(
+            self.macro_names.get(index, f"Macro {index}"))
 
     def _load_macro_from_slot_selection(self, item: QtWidgets.QListWidgetItem) -> None:
-        """Load macro from list selection."""
-        index = item.data(QtCore.Qt.ItemDataRole.UserRole)
-        # 1. Update Index Spinner
-        self.macro_index_spin.setValue(index) # This might seem redundant if hidden? No, bind group uses bind_index_spin
-        self.macro_bind_index_spin.setValue(index)
-        
-        # 2. Update Name Field
-        name = self.macro_names.get(index, f"Macro {index}")
-        self.macro_name_edit.setText(name)
-        
-        # 3. Load Data from Device
+        """Load a double-clicked macro slot from hardware."""
+        self._select_macro_slot(item)
+        index = int(item.data(QtCore.Qt.ItemDataRole.UserRole))
         self._load_macro_from_slot(index)
 
     def _save_current_macro(self) -> None:
@@ -1049,6 +1224,12 @@ class MainWindow(QtWidgets.QMainWindow):
         name = self.macro_name_edit.text().strip()
         if not name:
             QtWidgets.QMessageBox.warning(self, "Invalid Name", "Macro name cannot be empty.")
+            return
+        if len(name.encode("utf-16-le")) > 30:
+            QtWidgets.QMessageBox.warning(
+                self, "Name Too Long",
+                "A hardware macro name can contain at most 15 UTF-16 code "
+                "units. Shorten the name before saving.")
             return
 
         index = self.macro_bind_index_spin.value() # Use the target slot
@@ -1069,6 +1250,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _toggle_recording(self, checked: bool) -> None:
         """Start or stop macro recording."""
         if checked:
+            if self.macro_event_table.rowCount() >= vp.MACRO_MAX_EVENTS:
+                self.record_button.blockSignals(True)
+                self.record_button.setChecked(False)
+                self.record_button.blockSignals(False)
+                self._set_macro_builder_status(
+                    "The hardware slot is already full.", error=True)
+                return
             self._recording = True
             self._last_key_time = 0.0
             self.record_button.setText("🔴 Recording...")
@@ -1081,8 +1269,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _stop_recording(self) -> None:
         """Stop macro recording."""
+        if self._recording and self.macro_event_table.rowCount():
+            delay_widget = self.macro_event_table.cellWidget(
+                self.macro_event_table.rowCount() - 1, 3)
+            if delay_widget:
+                delay_widget.setValue(vp.MACRO_MIN_DELAY_MS)
         self._recording = False
+        self.record_button.blockSignals(True)
         self.record_button.setChecked(False)
+        self.record_button.blockSignals(False)
         self.record_button.setText("🔴 Record")
         self.stop_record_button.setEnabled(False)
         QtWidgets.QApplication.instance().removeEventFilter(self)
@@ -1100,16 +1295,58 @@ class MainWindow(QtWidgets.QMainWindow):
                 key_text = key_event.text().upper()
                 qt_key = key_event.key()
 
+                unsupported_modifiers = (
+                    QtCore.Qt.KeyboardModifier.ControlModifier |
+                    QtCore.Qt.KeyboardModifier.AltModifier |
+                    QtCore.Qt.KeyboardModifier.MetaModifier
+                )
+                if (key_event.modifiers() & unsupported_modifiers or
+                        qt_key in (
+                            QtCore.Qt.Key.Key_Control,
+                            QtCore.Qt.Key.Key_Alt,
+                            QtCore.Qt.Key.Key_Meta,
+                        )):
+                    self._set_macro_builder_status(
+                        "Recording skipped a Ctrl/Alt/Meta combination: only "
+                        "the capture-confirmed Shift modifier is available in "
+                        "this macro format.", error=True)
+                    return True
+
                 # Map Qt key to HID key name
                 key_name = self._qt_key_to_name(qt_key, key_text)
                 if key_name and key_name in vp.HID_KEY_USAGE:
                     current_time = time.time() * 1000  # ms
-                    delay = int(current_time - self._last_key_time) if self._last_key_time > 0 else 0
-                    delay = min(delay, 5000)  # Cap at 5 seconds
-                    self._last_key_time = current_time
+                    if (self._last_key_time > 0 and
+                            self.macro_event_table.rowCount()):
+                        # Each hardware delay belongs to the event before it.
+                        previous_delay = min(
+                            0xFFFF,
+                            max(vp.MACRO_MIN_DELAY_MS,
+                                int(current_time - self._last_key_time)),
+                        )
+                        delay_widget = self.macro_event_table.cellWidget(
+                            self.macro_event_table.rowCount() - 1, 3)
+                        if delay_widget:
+                            delay_widget.setValue(previous_delay)
 
                     is_down = event.type() == QtCore.QEvent.Type.KeyPress
-                    self._add_event_to_table(key_name, is_down, delay)
+                    is_modifier = key_name == "Shift"
+                    keycode = (vp.MACRO_SHIFT_CODE if is_modifier
+                               else vp.HID_KEY_USAGE[key_name])
+                    added = self._add_event_to_table(
+                        key_name, is_down, vp.MACRO_MIN_DELAY_MS,
+                        is_modifier=is_modifier,
+                        event_type="modifier" if is_modifier else "keyboard",
+                        keycode=keycode,
+                    )
+                    if not added:
+                        self._stop_recording()
+                        self._set_macro_builder_status(
+                            "Recording stopped: the 69-event slot is full.",
+                            error=True,
+                        )
+                        return True
+                    self._last_key_time = current_time
                     return True  # Consume the event
 
         return super().eventFilter(obj, event)
@@ -1122,43 +1359,103 @@ class MainWindow(QtWidgets.QMainWindow):
         # Handle number keys
         if len(key_text) == 1 and key_text.isdigit():
             return key_text
-        # Handle special keys
-        key_map = {
-            QtCore.Qt.Key.Key_Return: "Enter",
-            QtCore.Qt.Key.Key_Enter: "Enter",
-            QtCore.Qt.Key.Key_Escape: "Escape",
-            QtCore.Qt.Key.Key_Backspace: "Backspace",
-            QtCore.Qt.Key.Key_Tab: "Tab",
-            QtCore.Qt.Key.Key_Space: "Space",
-            QtCore.Qt.Key.Key_Insert: "Insert",
-            QtCore.Qt.Key.Key_Home: "Home",
-            QtCore.Qt.Key.Key_End: "End",
-            QtCore.Qt.Key.Key_PageUp: "PageUp",
-            QtCore.Qt.Key.Key_PageDown: "PageDown",
-            QtCore.Qt.Key.Key_Delete: "Delete",
-            QtCore.Qt.Key.Key_Left: "Left",
-            QtCore.Qt.Key.Key_Right: "Right",
-            QtCore.Qt.Key.Key_Up: "Up",
-            QtCore.Qt.Key.Key_Down: "Down",
-            QtCore.Qt.Key.Key_F1: "F1", QtCore.Qt.Key.Key_F2: "F2", QtCore.Qt.Key.Key_F3: "F3",
-            QtCore.Qt.Key.Key_F4: "F4", QtCore.Qt.Key.Key_F5: "F5", QtCore.Qt.Key.Key_F6: "F6",
-            QtCore.Qt.Key.Key_F7: "F7", QtCore.Qt.Key.Key_F8: "F8", QtCore.Qt.Key.Key_F9: "F9",
-            QtCore.Qt.Key.Key_F10: "F10", QtCore.Qt.Key.Key_F11: "F11", QtCore.Qt.Key.Key_F12: "F12",
-            QtCore.Qt.Key.Key_Comma: "Comma",
-            QtCore.Qt.Key.Key_Period: "Period",
-            QtCore.Qt.Key.Key_Slash: "Slash",
-            QtCore.Qt.Key.Key_Semicolon: "Semicolon",
-            QtCore.Qt.Key.Key_Minus: "Minus",
-            QtCore.Qt.Key.Key_Equal: "Equal",
-        }
-        return key_map.get(qt_key)
+        if qt_key == QtCore.Qt.Key.Key_Shift:
+            return "Shift"
+        return KeyCaptureEdit._QT_TO_HID.get(qt_key)
+
+    def _set_macro_builder_status(self, message: str,
+                                  error: bool = False) -> None:
+        if hasattr(self, "text_builder_status"):
+            self.text_builder_status.setText(message)
+            self.text_builder_status.setStyleSheet(
+                "color: #e57373;" if error else "color: palette(mid);")
+        if error:
+            self._log(f"Macro editor: {message}")
+
+    def _can_add_macro_events(self, count: int) -> bool:
+        return (self.macro_event_table.rowCount() + count
+                <= vp.MACRO_MAX_EVENTS)
+
+    def _sync_text_timing_controls(self) -> None:
+        """Show only the timing controls relevant to the chosen mode."""
+        random_timing = self.text_timing_mode.currentData() == "random"
+        self.text_fixed_delay_label.setVisible(not random_timing)
+        self.text_fixed_delay_spin.setVisible(not random_timing)
+        self.text_random_range_widget.setVisible(random_timing)
+        self._update_text_macro_requirements()
+
+    def _sync_manual_event_controls(self) -> None:
+        """A hold duration is meaningful only for a complete tap."""
+        is_tap = self.add_action_combo.currentData() == "tap"
+        self.add_hold_label.setEnabled(is_tap)
+        self.add_hold_spin.setEnabled(is_tap)
+        self.add_event_button.setText(
+            "Add Tap" if is_tap else "Add Event")
+
+    def _text_macro_timing(self) -> tuple[int, int]:
+        if self.text_timing_mode.currentData() == "random":
+            return (self.text_random_min_spin.value(),
+                    self.text_random_max_spin.value())
+        fixed = self.text_fixed_delay_spin.value()
+        return fixed, fixed
+
+    def _update_text_macro_requirements(self) -> None:
+        """Validate text conversion and show its exact slot cost."""
+        if not hasattr(self, "gen_text_btn"):
+            return
+        text = self.quick_text_edit.toPlainText()
+        required, unsupported = vp.text_macro_requirements(text)
+        existing = self.macro_event_table.rowCount()
+        append = self.text_output_mode.currentData() == "append"
+        total = existing + required if append else required
+        minimum, maximum = self._text_macro_timing()
+
+        error = ""
+        if not text:
+            message = (
+                f"US keyboard layout · {vp.MACRO_MAX_EVENTS - existing} "
+                "hardware events available in this slot")
+        elif unsupported:
+            display = ", ".join(repr(character) for character in unsupported)
+            error = f"Unsupported character(s): {display}"
+            message = error
+        elif minimum > maximum:
+            error = "The random minimum cannot exceed the maximum."
+            message = error
+        elif maximum + self.text_word_pause_spin.value() > 0xFFFF:
+            error = "The inter-key delay plus word pause exceeds 65,535 ms."
+            message = error
+        elif total > vp.MACRO_MAX_EVENTS:
+            error = (
+                f"Needs {total} events after generation; the hardware slot "
+                f"holds {vp.MACRO_MAX_EVENTS}.")
+            message = error
+        else:
+            verb = "append" if append else "replace"
+            message = (
+                f"{len(text)} character(s) → {required} events · "
+                f"{vp.MACRO_MAX_EVENTS - total} free after {verb}")
+
+        self.gen_text_btn.setEnabled(bool(text) and not error)
+        self.text_builder_status.setText(message)
+        self.text_builder_status.setStyleSheet(
+            "color: #e57373;" if error else "color: palette(mid);")
 
     def _add_event_to_table(self, key_name: str, is_down: bool, delay: int,
                             is_modifier: bool = False,
                             event_type: str = "keyboard",
-                            keycode: int | None = None) -> None:
-        """Add an event row to the macro event table."""
-        row = self.macro_event_table.rowCount()
+                            keycode: int | None = None,
+                            row: int | None = None,
+                            update_preview: bool = True) -> bool:
+        """Add one event without allowing a write past the hardware slot."""
+        if not self._can_add_macro_events(1):
+            self._set_macro_builder_status(
+                f"The slot is full ({vp.MACRO_MAX_EVENTS} events).",
+                error=True)
+            return False
+        if row is None:
+            row = self.macro_event_table.rowCount()
+        row = max(0, min(row, self.macro_event_table.rowCount()))
         self.macro_event_table.insertRow(row)
 
         # Row number
@@ -1183,7 +1480,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Delay (editable)
         delay_spin = QtWidgets.QSpinBox()
-        delay_spin.setRange(0, 5000)
+        delay_spin.setRange(0, 0xFFFF)
         delay_spin.setValue(delay)
         delay_spin.setSuffix(" ms")
         delay_spin.valueChanged.connect(self._update_macro_preview)
@@ -1195,7 +1492,10 @@ class MainWindow(QtWidgets.QMainWindow):
         delete_btn.clicked.connect(lambda: self._delete_event_row(row))
         self.macro_event_table.setCellWidget(row, 4, delete_btn)
 
-        self._update_macro_preview()
+        self._renumber_rows()
+        if update_preview:
+            self._update_macro_preview()
+        return True
 
     def _delete_event_row(self, row: int) -> None:
         """Delete a row from the event table."""
@@ -1218,6 +1518,43 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_macro_events(self) -> None:
         """Clear all events from the table."""
         self.macro_event_table.setRowCount(0)
+        self._update_macro_preview()
+
+    def _selected_macro_rows(self) -> list[int]:
+        return sorted({index.row() for index in
+                       self.macro_event_table.selectionModel().selectedRows()})
+
+    def _delete_selected_events(self) -> None:
+        rows = self._selected_macro_rows()
+        if not rows and self.macro_event_table.currentRow() >= 0:
+            rows = [self.macro_event_table.currentRow()]
+        for row in reversed(rows):
+            self.macro_event_table.removeRow(row)
+        self._renumber_rows()
+        self._update_macro_preview()
+
+    def _duplicate_selected_event(self) -> None:
+        row = self.macro_event_table.currentRow()
+        if row < 0:
+            return
+        if not self._can_add_macro_events(1):
+            self._set_macro_builder_status(
+                "Cannot duplicate: the hardware slot is full.", error=True)
+            return
+        data = self._get_row_data(row)
+        self._add_event_to_table(
+            data[0], bool(data[1]), int(data[2]), bool(data[3]),
+            str(data[4]), data[5], row=row + 1)
+        self.macro_event_table.selectRow(row + 1)
+
+    def _apply_delay_to_selected(self) -> None:
+        rows = self._selected_macro_rows()
+        if not rows and self.macro_event_table.currentRow() >= 0:
+            rows = [self.macro_event_table.currentRow()]
+        for row in rows:
+            delay_widget = self.macro_event_table.cellWidget(row, 3)
+            if delay_widget:
+                delay_widget.setValue(self.selected_delay_spin.value())
         self._update_macro_preview()
 
     def _move_event_up(self) -> None:
@@ -1275,48 +1612,80 @@ class MainWindow(QtWidgets.QMainWindow):
             delay_widget.setValue(delay)
 
     def _add_manual_event(self) -> None:
-        """Add an event manually from the add controls."""
+        """Add a tap or a single press/release event from the builder."""
         key_name = self.add_key_combo.currentText()
         event_data = self.add_key_combo.currentData()
         if not event_data:
             return
         event_type, keycode = event_data
-        is_down = self.add_action_combo.currentData()
-        delay = self.add_delay_spin.value()
-        self._add_event_to_table(key_name, is_down, delay,
-                                 event_type=event_type, keycode=keycode)
+        action = self.add_action_combo.currentData()
+        is_modifier = event_type == "modifier"
+        needed = 2 if action == "tap" else 1
+        if not self._can_add_macro_events(needed):
+            self._set_macro_builder_status(
+                f"This action needs {needed} event(s), but only "
+                f"{vp.MACRO_MAX_EVENTS - self.macro_event_table.rowCount()} "
+                "remain in the slot.", error=True)
+            return
+
+        if action == "tap":
+            self._add_event_to_table(
+                key_name, True, self.add_hold_spin.value(), is_modifier,
+                event_type, keycode, update_preview=False)
+            self._add_event_to_table(
+                key_name, False, self.add_delay_spin.value(), is_modifier,
+                event_type, keycode, update_preview=False)
+        else:
+            self._add_event_to_table(
+                key_name, action == "press", self.add_delay_spin.value(),
+                is_modifier, event_type, keycode, update_preview=False)
+        self._update_macro_preview()
 
     def _update_macro_preview(self) -> None:
-        """Update the preview label with the macro output."""
-        # Build string from press events (assuming standard typing)
-        result = []
-        total_delay = 0
-        pressed_keys = set()
+        """Update output, duration, capacity, and unmatched-state feedback."""
+        events = self._get_macro_events_from_table()
+        total_delay = sum(event.delay_ms for event in events)
+        output: list[str] = []
+        pressed: set[tuple[str, int]] = set()
+        shift_active = False
 
-        for row in range(self.macro_event_table.rowCount()):
-            key = self.macro_event_table.item(row, 1).text() if self.macro_event_table.item(row, 1) else ""
-            event_type = (self.macro_event_table.item(row, 1).data(
-                QtCore.Qt.ItemDataRole.UserRole + 2) if self.macro_event_table.item(row, 1) else "keyboard")
-            action_item = self.macro_event_table.item(row, 2)
-            is_down = action_item.data(QtCore.Qt.ItemDataRole.UserRole) if action_item else True
-            delay_widget = self.macro_event_table.cellWidget(row, 3)
-            delay = delay_widget.value() if delay_widget else 0
-
-            total_delay += delay
-
-            if is_down:
-                pressed_keys.add(key)
-                # Only add to result for single-char keys to show "typed" output
-                if event_type == "mouse":
-                    mouse_label = key[7:] if key.startswith("Mouse: ") else key
-                    result.append(f"[{mouse_label}]")
-                elif len(key) == 1:
-                    result.append(key.lower())
+        for event in events:
+            event_type = "modifier" if event.is_modifier else event.event_type
+            identity = (event_type, event.keycode)
+            if event.is_down:
+                pressed.add(identity)
             else:
-                pressed_keys.discard(key)
+                pressed.discard(identity)
 
-        output = "".join(result)
-        self.macro_preview_label.setText(f'Output: "{output}" ({total_delay} ms total)')
+            if event_type == "modifier" and event.keycode == vp.MACRO_SHIFT_CODE:
+                shift_active = event.is_down
+            elif event_type == "mouse" and event.is_down:
+                mouse_names = {
+                    0x01: "Left click", 0x02: "Right click",
+                    0x04: "Middle click", 0x08: "Back click",
+                    0x10: "Forward click",
+                }
+                output.append(f"[{mouse_names.get(event.keycode, 'Mouse click')}]")
+            elif event_type == "keyboard" and event.is_down:
+                character = vp.ASCII_FROM_HID.get(
+                    (event.keycode, shift_active))
+                if character is not None:
+                    output.append(character)
+                else:
+                    name = self.HID_USAGE_TO_NAME.get(
+                        event.keycode, f"0x{event.keycode:02X}")
+                    output.append(f"[{name}]")
+
+        rendered = json.dumps("".join(output), ensure_ascii=False)
+        warning = f" · ⚠ {len(pressed)} still pressed" if pressed else ""
+        self.macro_preview_label.setText(
+            f"Output: {rendered} · {total_delay:,} ms total{warning}")
+        count = self.macro_event_table.rowCount()
+        self.macro_capacity_bar.setValue(count)
+        self.macro_capacity_bar.setFormat(
+            f"{count} / {vp.MACRO_MAX_EVENTS} hardware events · "
+            f"{vp.MACRO_MAX_EVENTS - count} free")
+        self._update_text_macro_requirements()
 
     def _get_macro_events_from_table(self) -> list:
         """Extract macro events from the table."""
@@ -1330,8 +1699,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 continue
 
             key_name = key_item.text()
-            is_down = action_item.data(QtCore.Qt.ItemDataRole.UserRole)
-            is_modifier = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or False
+            is_down = bool(action_item.data(QtCore.Qt.ItemDataRole.UserRole))
+            is_modifier = bool(
+                key_item.data(QtCore.Qt.ItemDataRole.UserRole + 1))
             event_type = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 2) or (
                 "modifier" if is_modifier else "keyboard")
             stored_keycode = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 3)
@@ -1405,12 +1775,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rgb_brightness.setToolTip("Adjust the overall brightness of the LED.")
         self.rgb_brightness_label = QtWidgets.QLabel("100%")
         self.rgb_brightness.valueChanged.connect(
-            lambda v: self.rgb_brightness_label.setText(f"{v}%")
+            self._update_rgb_brightness_label
         )
         
         brightness_layout = QtWidgets.QHBoxLayout()
         brightness_layout.addWidget(self.rgb_brightness, stretch=1)
         brightness_layout.addWidget(self.rgb_brightness_label)
+
+        self.rgb_speed_label = QtWidgets.QLabel("Effect speed (raw):")
+        self.rgb_speed = QtWidgets.QSpinBox()
+        self.rgb_speed.setRange(0, 0xFF)
+        self.rgb_speed.setValue(1)
+        self.rgb_speed.setToolTip(
+            "Holtek per-profile animation speed byte. The exact scale is "
+            "firmware-defined; the factory value is 1.")
+        self.rgb_speed_label.setVisible(False)
+        self.rgb_speed.setVisible(False)
 
         apply_custom_button = QtWidgets.QPushButton("Apply Lighting")
         apply_custom_button.setStyleSheet("font-weight: bold; padding: 8px; background-color: #444;")
@@ -1433,7 +1813,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         form_layout.addRow("Color:", self.rgb_color_button)
         form_layout.addRow("Mode:", self.rgb_mode)
-        form_layout.addRow("Brightness:", brightness_layout)
+        self.rgb_brightness_form_label = QtWidgets.QLabel("Brightness:")
+        form_layout.addRow(self.rgb_brightness_form_label, brightness_layout)
+        form_layout.addRow(self.rgb_speed_label, self.rgb_speed)
         form_layout.addRow("", apply_custom_button)
         form_layout.addRow("Battery LED:", self.battery_led_checkbox)
         form_layout.addRow("", gradient_label)
@@ -1445,6 +1827,10 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addStretch()
         
         return widget
+
+    def _update_rgb_brightness_label(self, value: int) -> None:
+        suffix = " raw" if self.device_type == "holtek" else "%"
+        self.rgb_brightness_label.setText(f"{value}{suffix}")
 
     def _set_custom_color(self, color: QtGui.QColor) -> None:
         """Set the current color from a preset."""
@@ -1500,10 +1886,31 @@ class MainWindow(QtWidgets.QMainWindow):
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
 
-        header = QtWidgets.QLabel(
+        self.dpi_header = QtWidgets.QLabel(
             "DPI slots (presets are captured values; custom conversion is approximate and sensor-dependent)")
-        header.setWordWrap(True)
-        layout.addWidget(header)
+        self.dpi_header.setWordWrap(True)
+        layout.addWidget(self.dpi_header)
+
+        self.dpi_profile_controls = QtWidgets.QWidget()
+        profile_controls = QtWidgets.QHBoxLayout(self.dpi_profile_controls)
+        profile_controls.setContentsMargins(0, 0, 0, 0)
+        self.dpi_stage_count_label = QtWidgets.QLabel("Enabled stages:")
+        profile_controls.addWidget(self.dpi_stage_count_label)
+        self.dpi_stage_count_spin = QtWidgets.QSpinBox()
+        self.dpi_stage_count_spin.setRange(1, 10)
+        self.dpi_stage_count_spin.setValue(5)
+        self.dpi_stage_count_spin.valueChanged.connect(
+            self._update_dpi_row_visibility)
+        profile_controls.addWidget(self.dpi_stage_count_spin)
+        profile_controls.addSpacing(16)
+        self.dpi_active_stage_label = QtWidgets.QLabel("Current stage:")
+        profile_controls.addWidget(self.dpi_active_stage_label)
+        self.dpi_active_stage_spin = QtWidgets.QSpinBox()
+        self.dpi_active_stage_spin.setRange(1, 5)
+        self.dpi_active_stage_spin.setValue(1)
+        profile_controls.addWidget(self.dpi_active_stage_spin)
+        profile_controls.addStretch()
+        layout.addWidget(self.dpi_profile_controls)
 
         self.dpi_rows: list[tuple[
             QtWidgets.QComboBox,
@@ -1511,8 +1918,13 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QSpinBox,
             QtWidgets.QSpinBox,
         ]] = []
-        for slot in range(5):
-            row = QtWidgets.QHBoxLayout()
+        self.dpi_row_widgets: list[QtWidgets.QWidget] = []
+        self.dpi_raw_labels: list[QtWidgets.QLabel] = []
+        self.dpi_check_labels: list[QtWidgets.QLabel] = []
+        for slot in range(10):
+            row_widget = QtWidgets.QWidget()
+            row = QtWidgets.QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
             label = QtWidgets.QLabel(f"Slot {slot + 1}")
             label.setMinimumWidth(60)
 
@@ -1532,18 +1944,29 @@ class MainWindow(QtWidgets.QMainWindow):
             value_spin.valueChanged.connect(lambda _=None, row_index=slot: self._on_dpi_value_changed(row_index))
             tweak_spin = QtWidgets.QSpinBox()
             tweak_spin.setRange(0, 255)
+            tweak_spin.setReadOnly(True)
+            tweak_spin.setButtonSymbols(
+                QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
+            tweak_spin.setToolTip(
+                "Derived record checksum byte; updated from the raw value.")
+
+            raw_label = QtWidgets.QLabel("Raw value")
+            check_label = QtWidgets.QLabel("Check")
 
             row.addWidget(label)
             row.addWidget(combo)
             row.addWidget(QtWidgets.QLabel("DPI"))
             row.addWidget(dpi_spin)
-            row.addWidget(QtWidgets.QLabel("Value"))
+            row.addWidget(raw_label)
             row.addWidget(value_spin)
-            row.addWidget(QtWidgets.QLabel("Tweak"))
+            row.addWidget(check_label)
             row.addWidget(tweak_spin)
-            layout.addLayout(row)
+            layout.addWidget(row_widget)
 
             self.dpi_rows.append((combo, dpi_spin, value_spin, tweak_spin))
+            self.dpi_row_widgets.append(row_widget)
+            self.dpi_raw_labels.append(raw_label)
+            self.dpi_check_labels.append(check_label)
 
         apply_button = QtWidgets.QPushButton("Apply DPI Slots")
         apply_button.clicked.connect(self._apply_dpi)
@@ -1551,7 +1974,20 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addStretch(1)
 
         self._sync_dpi_presets()
+        self._update_dpi_row_visibility()
         return widget
+
+    def _dpi_stage_count(self) -> int:
+        """Return the number of rows the selected protocol can safely write."""
+        return self.dpi_stage_count_spin.value()
+
+    def _update_dpi_row_visibility(self) -> None:
+        if not hasattr(self, "dpi_row_widgets"):
+            return
+        count = self._dpi_stage_count()
+        self.dpi_active_stage_spin.setMaximum(max(1, count))
+        for index, row_widget in enumerate(self.dpi_row_widgets):
+            row_widget.setVisible(index < count)
 
     def _build_advanced_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget()
@@ -1979,7 +2415,11 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 # Auto-read settings on startup
                 self._log("Connect: Triggering auto-read settings...")
-                self._read_settings(silent=silent)
+                if is_holtek:
+                    self._read_settings_holtek(
+                        silent=silent, use_active_profile=True)
+                else:
+                    self._read_settings(silent=silent)
                 self._request_battery_refresh()
         else:
             self._log("Connect: No devices found.")
@@ -2018,19 +2458,123 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.macro_button_select.addItem(profile.label, key)
 
     def _update_macro_tab_availability(self) -> None:
-        """Enable/disable macro tab based on device type."""
-        # Macros are not yet supported for Holtek devices
-        # Find the Macros tab index and enable/disable it
-        tabs = self.centralWidget().findChild(QtWidgets.QTabWidget)
-        if tabs:
-            for i in range(tabs.count()):
-                if tabs.tabText(i) == "Macros":
-                    tabs.setTabEnabled(i, self.device_type != 'holtek')
-                    if self.device_type == 'holtek':
-                        tabs.setTabToolTip(i, "Macros not yet supported for Venus MMO (Holtek)")
-                    else:
-                        tabs.setTabToolTip(i, "")
-                    break
+        """Synchronize every protocol-specific control after detection."""
+        self._sync_device_specific_ui()
+
+    def _sync_device_specific_ui(self) -> None:
+        """Expose only controls that the selected controller implements."""
+        is_holtek = self.device_type == "holtek"
+
+        actions = (
+            [
+                "Keyboard Key", "Left Click", "Right Click", "Middle Click",
+                "Forward", "Back", "DPI Control", "Fire Key",
+                "Profile Switch", "Disabled",
+            ] if is_holtek else [
+                "Keyboard Key", "Left Click", "Right Click", "Middle Click",
+                "Forward", "Back", "Macro", "Fire Key", "Triple Click",
+                "Media Key", "RGB Toggle", "Polling Rate Toggle",
+                "DPI Control", "Disabled",
+            ]
+        )
+        current_action = self.action_select.currentText()
+        self.action_select.blockSignals(True)
+        self.action_select.clear()
+        self.action_select.addItems(actions)
+        selected = self.action_select.findText(current_action)
+        self.action_select.setCurrentIndex(
+            selected if selected >= 0 else self.action_select.findText("Disabled"))
+        self.action_select.blockSignals(False)
+        self._update_bind_ui(self.action_select.currentText())
+
+        modifier_tooltip = (
+            "The Holtek button record stores one HID key and has no modifier "
+            "field." if is_holtek else "Combine modifiers with the selected key.")
+        for checkbox in (self.mod_ctrl, self.mod_shift, self.mod_alt, self.mod_win):
+            checkbox.blockSignals(True)
+            if is_holtek:
+                checkbox.setChecked(False)
+            checkbox.setEnabled(not is_holtek)
+            checkbox.setToolTip(modifier_tooltip)
+            checkbox.blockSignals(False)
+        self.modifier_label.setEnabled(not is_holtek)
+        self.modifier_label.setToolTip(modifier_tooltip)
+
+        self.special_delay_label.setVisible(not is_holtek)
+        self.special_delay_spin.setVisible(not is_holtek)
+
+        current_dpi_action = self.dpi_action_select.currentData()
+        self.dpi_action_select.blockSignals(True)
+        self.dpi_action_select.clear()
+        if not is_holtek:
+            self.dpi_action_select.addItem("DPI Loop", 0x01)
+        self.dpi_action_select.addItem("DPI +", 0x02)
+        self.dpi_action_select.addItem("DPI -", 0x03)
+        dpi_action_index = self.dpi_action_select.findData(current_dpi_action)
+        self.dpi_action_select.setCurrentIndex(
+            dpi_action_index if dpi_action_index >= 0 else 0)
+        self.dpi_action_select.blockSignals(False)
+
+        for index in range(self.tabs.count()):
+            title = self.tabs.tabText(index)
+            if title == "Macros":
+                self.tabs.setTabEnabled(index, not is_holtek)
+                self.tabs.setTabToolTip(
+                    index,
+                    "The Holtek controller has no confirmed hardware macro "
+                    "format." if is_holtek else "")
+            elif title == "Advanced":
+                self.tabs.setTabEnabled(index, not is_holtek)
+                self.tabs.setTabToolTip(
+                    index,
+                    "Raw reports on this tab use the 17-byte Areson format."
+                    if is_holtek else "")
+
+        for button in (self.export_button, self.import_button, self.reset_button):
+            button.setEnabled(not is_holtek)
+        self.export_button.setToolTip(
+            "Full profile export is currently Areson-only." if is_holtek else "")
+        self.import_button.setToolTip(
+            "Full profile import is currently Areson-only." if is_holtek else "")
+        self.reset_button.setToolTip(
+            "The Holtek factory-reset sequence is not confirmed." if is_holtek else "")
+
+        self.rgb_speed_label.setVisible(is_holtek)
+        self.rgb_speed.setVisible(is_holtek)
+        self.rgb_brightness.setMaximum(0xFF if is_holtek else 100)
+        self.rgb_brightness_form_label.setText(
+            "Brightness (raw):" if is_holtek else "Brightness:")
+        self._update_rgb_brightness_label(self.rgb_brightness.value())
+
+        self.dpi_profile_controls.setVisible(True)
+        self.dpi_stage_count_spin.setMaximum(10 if is_holtek else 5)
+        self.dpi_active_stage_label.setVisible(is_holtek)
+        self.dpi_active_stage_spin.setVisible(is_holtek)
+        self.dpi_header.setText(
+            "Per-profile DPI stages (Holtek stores 1–10 stages at 200-DPI "
+            "increments)." if is_holtek else
+            "DPI slots (presets are captured values; custom conversion is "
+            "approximate and sensor-dependent)")
+        preset_values = (sorted(hp.DPI_PRESETS) if is_holtek
+                         else sorted(vp.DPI_PRESETS))
+        for combo, dpi_spin, value_spin, tweak_spin in self.dpi_rows:
+            current_dpi = dpi_spin.value()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("Custom", None)
+            for dpi in preset_values:
+                combo.addItem(f"{dpi} DPI", dpi)
+            preset_index = combo.findData(current_dpi)
+            combo.setCurrentIndex(preset_index if preset_index >= 0 else 0)
+            combo.blockSignals(False)
+            dpi_spin.setRange(200 if is_holtek else 100,
+                              28000 if is_holtek else 20000)
+            dpi_spin.setSingleStep(200 if is_holtek else 100)
+            value_spin.setVisible(not is_holtek)
+            tweak_spin.setVisible(not is_holtek)
+        for label in self.dpi_raw_labels + self.dpi_check_labels:
+            label.setVisible(not is_holtek)
+        self._update_dpi_row_visibility()
 
     def _require_device(self, auto_mode: bool = False) -> bool:
         """Check if a device path is available for transient connections."""
@@ -2096,6 +2640,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_button_binding(self, silent: bool = False) -> None:
         if not self.current_edit_key:
+            return
+        if self.action_select.currentData() == "__preserve_unknown__":
             return
 
         action = self.action_select.currentText()
@@ -2221,9 +2767,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"Media: {name}"
             
         elif action in ["Fire Key", "Triple Click"]:
-             delay = params.get("delay", 40)
-             repeat = params.get("repeat", 3)
-             return f"{action} ({delay}ms, x{repeat})"
+            repeat = params.get("repeat", 3)
+            if self.device_type == "holtek":
+                return f"{action} (x{repeat})"
+            delay = params.get("delay", 40)
+            return f"{action} ({delay}ms, x{repeat})"
 
         # Default fallback for simple actions (Left Click, etc.)
         return action
@@ -2233,8 +2781,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.staging_manager.undo():
             self._log("Undo: Reverted last staged change.")
             self._update_staged_visuals()
-            # Update button_assignments from effective state for UI sync
-            self.button_assignments = self.staging_manager.get_all_effective_state()
+            self._refresh_current_binding_editor()
         else:
             self._log("Undo: Nothing to undo.")
 
@@ -2243,9 +2790,21 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.staging_manager.redo():
             self._log("Redo: Re-applied staging change.")
             self._update_staged_visuals()
-            self.button_assignments = self.staging_manager.get_all_effective_state()
+            self._refresh_current_binding_editor()
         else:
             self._log("Redo: Nothing to redo.")
+
+    def _refresh_current_binding_editor(self) -> None:
+        """Refresh the selected editor and preview from effective state."""
+        if not self.current_edit_key:
+            return
+        self._update_ui_from_assignment(self.current_edit_key)
+        effective = self.staging_manager.get_effective_state(
+            self.current_edit_key)
+        if effective:
+            description = self._get_binding_description(
+                effective.get("action", ""), effective.get("params", {}))
+            self.feedback_action_label.setText(f"Action: {description}")
 
     def _update_staged_visuals(self) -> None:
         """Update button list to show staged vs committed state."""
@@ -2275,7 +2834,8 @@ class MainWindow(QtWidgets.QMainWindow):
                  desc = self._get_binding_description(entry["action"], entry["params"])
                  item_assign.setText(desc)
                  # Standard white/gray for committed
-                 item_assign.setForeground(QtGui.QBrush(QtGui.QColor("white")))
+                 item_assign.setForeground(QtGui.QBrush(
+                     self.palette().color(QtGui.QPalette.ColorRole.Text)))
                  font = item_assign.font()
                  font.setBold(False)
                  item_assign.setFont(font)
@@ -2291,23 +2851,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.staging_manager.has_changes():
             return
 
-        # Instantiate controller on demand (to use current device path)
-        # We need a PacketBuilder that mimics self._sync_all_buttons logic but for specific keys
-        # For now, let's reuse the logic inside _sync_all_buttons but adapted for the builder interface.
-        # Ideally, we refactor `_sync_all_buttons` to use a builder class.
-        
-        # Since TransactionController expects a builder with `build_packets(key, action, params)`,
-        # we can define a simple adapter here or refactor more deeply.
-        # Let's use an inner class or simple object for now to keep it localized.
-        
         class PacketBuilder:
             def __init__(self, parent):
                 self.parent = parent
                 
             def build_packets(self, key, action, params):
-                # Reuse logic from _sync_all_buttons (refactored to return list)
                 return self.parent._build_packets_for_key(key, action, params)
 
+        device = None
+        progress = None
+        success = False
+        failure: Exception | None = None
         try:
             device = dd.create_device(self.device_type, self.device_path)
             device.open()
@@ -2342,35 +2896,36 @@ class MainWindow(QtWidgets.QMainWindow):
                     pass
                 device = None
                 self._holtek_reconnect()
-
-            progress.close()
-
+        except Exception as exc:
+            failure = exc
+        finally:
             if device:
-                device.close()
-            
-            if success:
-                # Update local authoritative state
-                # The staging manager is already committed by the controller on success
-                # But we need to update self.button_assignments to match
-                # Actually, StagingManager.base_state should probably replace self.button_assignments
-                # or we sync them.
-                # Let's update self.button_assignments from the now-committed base_state
-                self.button_assignments = deepcopy(self.staging_manager.base_state)
-                
-                self._update_staged_visuals()
-                QtWidgets.QMessageBox.information(self, "Success", "All changes applied successfully.")
-            else:
-                QtWidgets.QMessageBox.critical(
-                    self, "Partial Write Possible",
-                    "A write failed. Earlier acknowledged changes may already be stored on the device; read settings again before retrying.")
-                
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Error", str(e))
+                try:
+                    device.close()
+                except Exception:
+                    pass
+            if progress:
+                progress.close()
+
+        if failure is not None:
+            QtWidgets.QMessageBox.critical(self, "Error", str(failure))
+        elif success:
+            self.button_assignments = deepcopy(self.staging_manager.base_state)
+            self._update_staged_visuals()
+            self._refresh_current_binding_editor()
+            QtWidgets.QMessageBox.information(
+                self, "Success", "All changes applied successfully.")
+        else:
+            QtWidgets.QMessageBox.critical(
+                self, "Partial Write Possible",
+                "A write failed. Earlier acknowledged changes may already be "
+                "stored on the device; read settings again before retrying.")
 
     def _discard_staged_changes(self) -> None:
         """Discard all staged changes."""
         self.staging_manager.clear_stage()
         self._update_staged_visuals()
+        self._refresh_current_binding_editor()
 
     def _build_packets_for_key(self, key: str, action: str, params: dict) -> list[bytes]:
         """Helper to build packets for a single key binding."""
@@ -2420,7 +2975,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _upload_macro(self) -> bool:
         """Collect current macro and upload to device."""
-        if not self.device_path:
+        if not self._require_device():
+            return False
+        if self.device_type == "holtek":
+            QtWidgets.QMessageBox.information(
+                self, "Not Supported",
+                "Hardware macros use the Areson protocol and are not "
+                "available on the Holtek Venus MMO.")
             return False
         
         macro_index = self.macro_bind_index_spin.value() - 1  # 0-indexed internally
@@ -2429,6 +2990,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         try:
             # 1. Collect events from table
+            if self.macro_event_table.rowCount():
+                final_delay = self.macro_event_table.cellWidget(
+                    self.macro_event_table.rowCount() - 1, 3)
+                if final_delay:
+                    final_delay.setValue(vp.MACRO_MIN_DELAY_MS)
             raw_events = self._get_macro_events_from_table()
             if not raw_events:
                 QtWidgets.QMessageBox.warning(self, "Error", "No valid events to upload.")
@@ -2442,11 +3008,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if not events:
                 QtWidgets.QMessageBox.warning(self, "Error", "No valid events to upload.")
                 return False
-
-            # Ensure last event delay = 3ms end marker.
-            last = events[-1]
-            events[-1] = vp.MacroEvent(last.keycode, last.is_down, 3,
-                                       last.is_modifier, last.event_type)
 
             if len(events) > vp.MACRO_MAX_EVENTS:
                 QtWidgets.QMessageBox.warning(
@@ -2499,30 +3060,15 @@ class MainWindow(QtWidgets.QMainWindow):
         repeat_count = self.macro_tab_repeat_count_spin.value()
         effective_repeat = repeat_count if repeat_mode == vp.MACRO_REPEAT_COUNT else repeat_mode
         
-        # update central state
-        self.button_assignments[button_key] = {
-            "action": "Macro", 
-            "params": {"index": macro_index, "mode": effective_repeat,
-                       "count": repeat_count}
-        }
         self.staging_manager.stage_change(
             button_key, "Macro",
             {"index": macro_index, "mode": effective_repeat})
         self._update_staged_visuals()
-        
-        # Give feedback
-        QtWidgets.QMessageBox.information(self, "Binding", f"Queueing Bind: {button_key} -> Macro {macro_index}.\nSyncing now...")
-        
+        self._log(
+            f"Binding macro slot {macro_index} to {button_key} "
+            f"(repeat 0x{effective_repeat:02X})")
         self._commit_staged_changes()
 
-
-    def _apply_rgb_preset(self) -> None:
-        if self.battery_led_enabled and self.device_type == "venus_pro":
-            self._set_battery_led_enabled(False, restore=False)
-        preset_key = self.rgb_select.currentText()
-        payload = vp.RGB_PRESETS[preset_key]
-        reports = [vp.build_simple(vp.CMD_READY), vp.build_report(vp.CMD_WRITE, payload)]
-        self._send_reports(reports, f"RGB Preset: {preset_key}")
 
     def _apply_rgb_custom(self) -> None:
         if not self._require_device():
@@ -2534,7 +3080,8 @@ class MainWindow(QtWidgets.QMainWindow):
         brightness = self.rgb_brightness.value()
 
         if self.device_type == 'holtek':
-            return self._apply_rgb_holtek(r, g, b, mode, brightness)
+            return self._apply_rgb_holtek(
+                r, g, b, mode, brightness, self.rgb_speed.value())
 
         if self.battery_led_enabled:
             self._set_battery_led_enabled(False, restore=False)
@@ -2561,13 +3108,16 @@ class MainWindow(QtWidgets.QMainWindow):
             dpi_value = combo.currentData()
             if dpi_value is None:
                 continue
-            preset = vp.DPI_PRESETS[dpi_value]
             dpi_spin.blockSignals(True)
             value_spin.blockSignals(True)
             tweak_spin.blockSignals(True)
             dpi_spin.setValue(dpi_value)
-            value_spin.setValue(preset["value"])
-            tweak_spin.setValue(vp.dpi_value_to_tweak(preset["value"]))
+            if self.device_type == "holtek":
+                raw_value = hp.dpi_to_raw(dpi_value)
+            else:
+                raw_value = vp.DPI_PRESETS[dpi_value]["value"]
+            value_spin.setValue(raw_value)
+            tweak_spin.setValue(vp.dpi_value_to_tweak(raw_value))
             dpi_spin.blockSignals(False)
             value_spin.blockSignals(False)
             tweak_spin.blockSignals(False)
@@ -2577,7 +3127,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._apply_dpi_holtek()
 
         reports = [vp.build_simple(vp.CMD_READY)]
-        for slot, (_, _, value_spin, tweak_spin) in enumerate(self.dpi_rows):
+        reports.append(vp.build_dpi_stage_count(self._dpi_stage_count()))
+        for slot, (_, _, value_spin, tweak_spin) in enumerate(
+                self.dpi_rows[:self._dpi_stage_count()]):
             value = value_spin.value()
             tweak = vp.dpi_value_to_tweak(value)
             tweak_spin.setValue(tweak)
@@ -2589,7 +3141,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         combo, dpi_spin, value_spin, tweak_spin = self.dpi_rows[row_index]
         dpi_value = dpi_spin.value()
-        value = vp.dpi_to_value(dpi_value)
+        if self.device_type == "holtek":
+            dpi_value = max(200, min(28000,
+                            int(round(dpi_value / 200)) * 200))
+            if dpi_spin.value() != dpi_value:
+                dpi_spin.blockSignals(True)
+                dpi_spin.setValue(dpi_value)
+                dpi_spin.blockSignals(False)
+            value = hp.dpi_to_raw(dpi_value)
+        else:
+            value = vp.dpi_to_value(dpi_value)
         tweak = vp.dpi_value_to_tweak(value)
 
         combo.blockSignals(True)
@@ -2635,6 +3196,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Discard any staged changes (they belong to the previous profile)
         if self.staging_manager.has_changes():
             self.staging_manager.clear_stage()
+            self._update_staged_visuals()
 
         # Re-read settings from device for the newly selected profile
         if self.device_path and self.device_type == 'holtek':
@@ -2666,7 +3228,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._log("  Warning: device did not reconnect within timeout")
 
-    def _apply_rgb_holtek(self, r: int, g: int, b: int, mode: int, brightness: int) -> None:
+    def _apply_rgb_holtek(self, r: int, g: int, b: int, mode: int,
+                          brightness: int, speed: int) -> None:
         """Apply RGB settings on Holtek device."""
         if not self._require_device():
             return
@@ -2680,7 +3243,8 @@ class MainWindow(QtWidgets.QMainWindow):
             device.open()
             device.enter_write_mode()
             profile = self.holtek_profile
-            packets = hp.build_led_packets(r, g, b, mode, brightness, profile=profile)
+            packets = hp.build_led_packets(
+                r, g, b, mode, brightness, speed, profile=profile)
             for pkt in packets:
                 device.send_feature(pkt)
                 time.sleep(0.008)
@@ -2695,7 +3259,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
             device = None
             mode_name = self.rgb_mode.currentText()
-            self._log(f"Holtek RGB (profile {profile + 1}): #{r:02x}{g:02x}{b:02x} {mode_name} {brightness}%")
+            self._log(
+                f"Holtek RGB (profile {profile + 1}): "
+                f"#{r:02x}{g:02x}{b:02x} {mode_name} "
+                f"brightness={brightness} speed={speed}")
             # Wait for device to reconnect after reset
             self._holtek_reconnect()
         except Exception as exc:
@@ -2736,11 +3303,16 @@ class MainWindow(QtWidgets.QMainWindow):
             device.enter_write_mode()
             # Collect DPI values from the UI (dpi_spin = actual DPI in CPI)
             dpi_values = []
-            for _, dpi_spin, _, _ in self.dpi_rows:
+            for _, dpi_spin, _, _ in self.dpi_rows[:self._dpi_stage_count()]:
                 dpi_values.append(dpi_spin.value())
             # Write DPI to the selected profile only
             profile = self.holtek_profile
-            packets = hp.build_dpi_packets(dpi_values, profile=profile)
+            packets = hp.build_dpi_packets(
+                dpi_values,
+                profile=profile,
+                current_stage=self.dpi_active_stage_spin.value() - 1,
+                color_indices=self.holtek_dpi_colors,
+            )
             for pkt in packets:
                 device.send_feature(pkt)
                 time.sleep(0.008)
@@ -2767,6 +3339,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _send_built_report(self) -> None:
         if not self._require_device():
             return
+        if self.device_type == "holtek":
+            QtWidgets.QMessageBox.warning(
+                self, "Wrong Protocol",
+                "Built reports on this tab use the 17-byte Areson format and "
+                "cannot be sent to a Holtek device.")
+            return
         try:
             command = int(self.adv_command.text().strip(), 16)
             payload_hex = self.adv_payload.text().strip().replace(" ", "")
@@ -2779,6 +3357,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _send_raw_report(self) -> None:
         if not self._require_device():
+            return
+        if self.device_type == "holtek":
+            QtWidgets.QMessageBox.warning(
+                self, "Wrong Protocol",
+                "Raw reports on this tab use the 17-byte Areson format and "
+                "cannot be sent to a Holtek device.")
             return
         try:
             raw_hex = self.adv_raw.text().strip().replace(" ", "")
@@ -2888,6 +3472,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log("Flash pages 0 and 1 read complete.")
 
             # 1. DPI Levels
+            stage_count = page0[0x02]
+            if 1 <= stage_count <= 5:
+                self.dpi_stage_count_spin.setValue(stage_count)
+                self._update_dpi_row_visibility()
+                self._log(f"  Enabled DPI stages: {stage_count}")
             dpi_offsets = [0x0C, 0x10, 0x14, 0x18, 0x1C]
             for i, offset in enumerate(dpi_offsets):
                 val = page0[offset]
@@ -3039,6 +3628,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # Load base state into staging manager
             self.staging_manager.load_base_state(self.button_assignments)
             self._update_staged_visuals()
+            self._refresh_current_binding_editor()
             
             # No trailing commit needed after reads - device auto-exits read mode
             # Sending 0x04/0x03 here would RE-ENTER config mode and break button inputs!
@@ -3062,20 +3652,31 @@ class MainWindow(QtWidgets.QMainWindow):
             if device:
                 device.close()
 
-    def _read_settings_holtek(self, silent: bool = False) -> None:
+    def _read_settings_holtek(self, silent: bool = False,
+                              use_active_profile: bool = False) -> None:
         """Read settings from Holtek Venus MMO device.
 
         Args:
             silent: If True, suppress the success message box (used during profile switch).
+            use_active_profile: Select and read the profile currently active on
+                the mouse. Used once during device connection.
         """
         profile = self.holtek_profile
-        self._log(f"--- Reading from Holtek Device (Profile {profile + 1}) ---")
+        profile_description = "active profile" if use_active_profile else f"Profile {profile + 1}"
+        self._log(f"--- Reading from Holtek Device ({profile_description}) ---")
         device = None
         try:
             device = hp.HoltekDevice(self.device_path)
             device.open()
 
-            config = hp.read_all_config(device, profile=profile)
+            config = hp.read_all_config(
+                device, profile=None if use_active_profile else profile)
+            if use_active_profile:
+                profile = max(0, min(4, int(config.get("active_profile", 0))))
+                self.holtek_profile = profile
+                self.profile_combo.blockSignals(True)
+                self.profile_combo.setCurrentIndex(profile)
+                self.profile_combo.blockSignals(False)
             buttons = config['buttons']
 
             self._log(f"  Read {len(buttons)} button entries from device")
@@ -3088,7 +3689,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 if btn_key not in self.active_button_profiles:
                     continue
 
-                action, params = hp.button_action_to_gui(btn_info['type'], btn_info['code'])
+                action, params = hp.button_action_to_gui(
+                    btn_info['type'], btn_info['code'],
+                    type_hi=btn_info.get('type_hi', 0))
                 self.button_assignments[btn_key] = {"action": action, "params": params}
                 self._log(f"  {btn_key}: {action} {params}")
 
@@ -3100,30 +3703,37 @@ class MainWindow(QtWidgets.QMainWindow):
             # Load base state into staging manager
             self.staging_manager.load_base_state(self.button_assignments)
             self._update_staged_visuals()
+            self._refresh_current_binding_editor()
 
             # Update DPI spinboxes from per-profile values
             dpi_stages = config.get('dpi_stages', [])
             if dpi_stages:
                 self._log(f"  DPI stages: {dpi_stages}")
+                self.dpi_stage_count_spin.blockSignals(True)
+                self.dpi_stage_count_spin.setValue(len(dpi_stages))
+                self.dpi_stage_count_spin.blockSignals(False)
+                self.dpi_active_stage_spin.setValue(
+                    max(1, min(len(dpi_stages),
+                               int(config.get('dpi_stage_current', 0)) + 1)))
+                self.holtek_dpi_colors = list(
+                    config.get('dpi_colors', []))
                 for i, dpi_val in enumerate(dpi_stages):
                     if i < len(self.dpi_rows):
                         _, dpi_spin, value_spin, tweak_spin = self.dpi_rows[i]
                         dpi_spin.blockSignals(True)
                         dpi_spin.setValue(dpi_val)
                         dpi_spin.blockSignals(False)
+                self._update_dpi_row_visibility()
 
-            # Update RGB color preview from per-profile LED settings
-            # Note: only update the color swatch, NOT mode/brightness — the Holtek
-            # factory defaults (mode=3 cycling, brightness=5) differ from the working
-            # tested values (mode=1 solid, brightness=100). Overriding the mode combo
-            # would cause "Apply Lighting" to send mode=3, which cycles colors instead
-            # of showing the user's chosen solid color.
+            # Reflect the entire per-profile LED record. Applying without an
+            # intentional edit must not silently replace mode, brightness, or speed.
             led = config.get('led', {})
             if led:
                 r, g, b = led.get('r', 0), led.get('g', 0), led.get('b', 0)
                 mode = led.get('mode', 3)
                 brightness = led.get('brightness', 5)
-                self._log(f"  LED: #{r:02x}{g:02x}{b:02x} mode={mode} brightness={brightness}")
+                speed = led.get('speed', 1)
+                self._log(f"  LED: #{r:02x}{g:02x}{b:02x} mode={mode} brightness={brightness} speed={speed}")
                 self.rgb_current_color = QtGui.QColor(r, g, b)
                 if hasattr(self, 'rgb_color_button'):
                     color = self.rgb_current_color
@@ -3131,6 +3741,11 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"background-color: {color.name()}; "
                         f"color: {'white' if color.lightness() < 128 else 'black'}; "
                         f"font-weight: bold;")
+                mode_index = self.rgb_mode.findData(mode)
+                if mode_index >= 0:
+                    self.rgb_mode.setCurrentIndex(mode_index)
+                self.rgb_brightness.setValue(brightness)
+                self.rgb_speed.setValue(speed)
 
             # Log raw data for debugging
             dpi_raw = config.get('dpi_raw', b'')
@@ -3322,18 +3937,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 
                 self.btn_table.item(row, 1).setText(desc)
                 # Reset color
-                self.btn_table.item(row, 1).setForeground(QtGui.QBrush(QtGui.QColor("white")))
+                self.btn_table.item(row, 1).setForeground(QtGui.QBrush(
+                    self.palette().color(QtGui.QPalette.ColorRole.Text)))
 
 
     def _load_macro_from_slot_on_tab(self) -> None:
         """Load macro from slot using the Macros tab's slot index spinner."""
         if not self._require_device():
             return
-        # The existing _load_macro_from_slot reads from macro_index_spin (Buttons tab)
-        # Temporarily sync the value from macro_bind_index_spin (Macros tab)
         slot_index = self.macro_bind_index_spin.value()
-        self.macro_index_spin.setValue(slot_index)
-        self._load_macro_from_slot()
+        self._load_macro_from_slot(slot_index)
 
     def _load_macro_from_slot(self, slot_index: int | None = None) -> None:
         """Read macro from selected slot and populate table."""
@@ -3342,6 +3955,13 @@ class MainWindow(QtWidgets.QMainWindow):
             
         if slot_index is None:
             slot_index = self.macro_index_spin.value()
+
+        self.macro_bind_index_spin.blockSignals(True)
+        self.macro_bind_index_spin.setValue(slot_index)
+        self.macro_bind_index_spin.blockSignals(False)
+        self.macro_list.blockSignals(True)
+        self.macro_list.setCurrentRow(slot_index - 1)
+        self.macro_list.blockSignals(False)
             
         start_page, start_offset = vp.get_macro_slot_info(slot_index - 1)
         
@@ -3358,9 +3978,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Read exactly one 0x180-byte slot from its absolute address.
             slot_address = (start_page << 8) | start_offset
-            for relative in range(0, 0x180, vp.MAX_DATA_LEN):
+            for relative in range(0, vp.MACRO_SLOT_SIZE, vp.MAX_DATA_LEN):
                 address = slot_address + relative
-                length = min(vp.MAX_DATA_LEN, 0x180 - relative)
+                length = min(vp.MAX_DATA_LEN,
+                             vp.MACRO_SLOT_SIZE - relative)
                 data.extend(device.read_flash(
                     (address >> 8) & 0xFF, address & 0xFF, length))
             raw_macro = bytes(data)
@@ -3372,6 +3993,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 try:
                     name = raw_macro[1:1 + name_length].decode('utf-16le')
                     self.macro_name_edit.setText(name)
+                    self.macro_names[slot_index] = name
+                    self._save_macro_names()
+                    self._refresh_macro_list()
                 except UnicodeDecodeError:
                     self.macro_name_edit.setText(f"Macro {slot_index}")
             else:
@@ -3400,7 +4024,7 @@ class MainWindow(QtWidgets.QMainWindow):
             }
 
             for _ in range(event_count):
-                if event_offset + 5 > 384:
+                if event_offset + 5 > vp.MACRO_SLOT_SIZE:
                     break
                     
                 b0 = raw_macro[event_offset]
@@ -3418,14 +4042,24 @@ class MainWindow(QtWidgets.QMainWindow):
                 if is_mouse:
                     key_name = mouse_names.get(keycode, f"Mouse: Button 0x{keycode:02X}")
                     self._add_event_to_table(key_name, is_down, delay,
-                                             event_type="mouse", keycode=keycode)
+                                             event_type="mouse", keycode=keycode,
+                                             update_preview=False)
                 else:
-                    key_name = self.HID_USAGE_TO_NAME.get(keycode, f"Key 0x{keycode:02X}")
+                    if is_modifier:
+                        key_name = (
+                            "Modifier: Shift" if keycode == vp.MACRO_SHIFT_CODE
+                            else f"Modifier 0x{keycode:02X}")
+                    else:
+                        key_name = self.HID_USAGE_TO_NAME.get(
+                            keycode, f"Key 0x{keycode:02X}")
                     self._add_event_to_table(key_name, is_down, delay, is_modifier,
-                                             keycode=keycode)
+                                             event_type="modifier" if is_modifier else "keyboard",
+                                             keycode=keycode,
+                                             update_preview=False)
                 
                 event_offset += 5
                 
+            self._update_macro_preview()
             self._log(f"Loaded macro slot {slot_index}")
             
         except Exception as e:
@@ -3437,41 +4071,48 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def _generate_text_macro(self) -> None:
-        """Generate macro events from quick text with proper modifier handling."""
-        text = self.quick_text_edit.text()
+        """Generate a validated fixed- or random-timing text macro."""
+        text = self.quick_text_edit.toPlainText()
         if not text:
             return
-            
-        delay = self.quick_delay_spin.value()
-        
-        self.macro_event_table.setRowCount(0)
-        
-        # Estimate size: modifiers add extra events
-        shift_count = sum(1 for c in text if c in vp.ASCII_TO_HID and vp.ASCII_TO_HID[c][1] != 0)
-        estimated_bytes = 1 + len(text.encode('utf-16le')) + ((len(text) + shift_count * 2) * 5) + 6
-        if estimated_bytes > 384:
-             QtWidgets.QMessageBox.warning(self, "Too Long", f"Estimated size {estimated_bytes} > 384 bytes.")
-             return
-        
-        for char in text:
-            if char in vp.ASCII_TO_HID:
-                code, mod = vp.ASCII_TO_HID[char]
-                key_name = self.HID_USAGE_TO_NAME.get(code, f"Key 0x{code:02X}")
-                
-                if mod != 0:
-                    # Need modifier (Shift for capitals/symbols)
-                    # Pattern: ModDown -> KeyDown -> ModUp -> KeyUp (overlapping)
-                    mod_name = "Shift" if mod == vp.MODIFIER_SHIFT else f"Mod 0x{mod:02X}"
-                    self._add_event_to_table(mod_name, True, delay, is_modifier=True)  # Shift down
-                    self._add_event_to_table(key_name, True, delay)   # Key down
-                    self._add_event_to_table(mod_name, False, delay, is_modifier=True) # Shift up
-                    self._add_event_to_table(key_name, False, delay)  # Key up
-                else:
-                    # Simple key press/release
-                    self._add_event_to_table(key_name, True, delay)
-                    self._add_event_to_table(key_name, False, delay)
+
+        minimum, maximum = self._text_macro_timing()
+        try:
+            events = vp.build_text_macro_events(
+                text,
+                key_hold_ms=self.text_hold_spin.value(),
+                delay_min_ms=minimum,
+                delay_max_ms=maximum,
+                extra_word_pause_ms=self.text_word_pause_spin.value(),
+            )
+        except ValueError as exc:
+            self._set_macro_builder_status(str(exc), error=True)
+            return
+
+        append = self.text_output_mode.currentData() == "append"
+        existing = self.macro_event_table.rowCount() if append else 0
+        if existing + len(events) > vp.MACRO_MAX_EVENTS:
+            self._set_macro_builder_status(
+                f"Generation would need {existing + len(events)} events; "
+                f"the slot holds {vp.MACRO_MAX_EVENTS}.", error=True)
+            return
+        if not append:
+            self.macro_event_table.setRowCount(0)
+
+        for event in events:
+            event_type = "modifier" if event.is_modifier else event.event_type
+            if event_type == "modifier":
+                key_name = "Modifier: Shift"
             else:
-                self._log(f"Skipping unknown char: {char}")
+                key_name = self.HID_USAGE_TO_NAME.get(
+                    event.keycode, f"Key 0x{event.keycode:02X}")
+            self._add_event_to_table(
+                key_name, event.is_down, event.delay_ms,
+                event.is_modifier, event_type, event.keycode,
+                update_preview=False)
+        self._update_macro_preview()
+        mode = "Appended" if append else "Generated"
+        self._log(f"{mode} {len(events)} macro events from {len(text)} characters")
 
 
 def main() -> None:

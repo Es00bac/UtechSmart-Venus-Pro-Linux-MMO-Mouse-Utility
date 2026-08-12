@@ -27,6 +27,8 @@ mkdir -p "${APP_DIR}/usr/share/applications"
 # Copy application files
 cp "${SCRIPT_DIR}/venus_gui.py" "${APP_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/venus_protocol.py" "${APP_DIR}/usr/share/venusprolinux/"
+cp "${SCRIPT_DIR}/holtek_protocol.py" "${APP_DIR}/usr/share/venusprolinux/"
+cp "${SCRIPT_DIR}/device_driver.py" "${APP_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/staging_manager.py" "${APP_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/transaction_controller.py" "${APP_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/mouseimg.png" "${APP_DIR}/usr/share/venusprolinux/"

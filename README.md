@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Linux-1f6feb)
-![Python](https://img.shields.io/badge/python-3.8%2B-3776ab)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![Status](https://img.shields.io/badge/status-active%20utility-2d8f6f)
 
 A reverse-engineered Linux configuration utility for the UtechSmart Venus Pro MMO gaming mouse.
@@ -73,31 +73,52 @@ If your device reports a different ID, verify support before assuming compatibil
 
 ## Features
 
-- **Button Remapping:** Configure all 16 buttons, including the 12-button side panel.
-- **Modifier Support:** Bind buttons to combinations such as `Ctrl+Shift+1` and `Alt+F1`.
-- **Macro Engine:** Visual macro editor to record and edit events with precise timing.
-- **Mouse Macro Events:** Add native left, right, and middle press/release events.
+- **Button Remapping:** Configure 16 Areson controls or all 19 mapped Holtek
+  controls, including the 12-button side panel.
+- **Modifier Support:** On Areson, bind combinations such as `Ctrl+Shift+1`
+  and `Alt+F1`.
+- **Macro Engine:** Slot-oriented editor with recording, reordering, duplication,
+  exact capacity feedback, and fixed or randomized timing.
+- **Text Macros:** Convert US-layout text with separate key-hold, inter-key,
+  random-range, and extra word-pause controls.
+- **Mouse Macro Events:** Add native left, right, middle, back, and forward taps
+  or individual press/release events.
 - **Battery Tray Icon:** Shows battery level and cable state through Qt's desktop tray API.
 - **Battery-color Mouse LED:** Optional minimum-brightness green → yellow →
   orange → red gauge, controlled by the app while it remains in the tray.
 - **RGB Lighting:** Full control over LED color, brightness, and effects such as Steady, Breathing, Neon, and Off.
-- **DPI Profiles:** Configure up to 5 DPI presets with customizable levels.
+- **DPI Profiles:** Configure 1–5 enabled Areson stages or 1–10 per-profile
+  Holtek stages, including the Holtek current stage.
+- **Controller-aware UI:** Shows only actions the connected Areson or Holtek
+  controller can encode; confirmed Holtek Profile Switch and physical DPI
+  button rebinding are exposed directly.
 - **Polling Rate:** Adjust USB polling rate between 125Hz and 1000Hz.
-- **Factory Reset:** Restore the device to its original state when troubleshooting or unwinding experiments.
+- **Factory Reset:** Restore Areson devices to their original state when
+  troubleshooting or unwinding experiments.
 
 ## Screenshots
 
 ### Buttons tab
 
-Configure button bindings for all 16 mouse buttons. Supports keyboard keys, mouse actions, macros, media keys, DPI control, and special functions like Fire Key and Triple Click.
+Configure every mapped Areson button with keyboard keys, mouse actions, macros,
+media keys, DPI control, and repeated-click actions. The list adapts when a
+Holtek device is connected.
 
 ![Buttons tab](Buttons.png)
 
 ### Macros tab
 
-Visual macro editor with recording functionality. Create key sequences with timing, add manual events, reorder steps, and preview output before binding.
+Build text with fixed or randomized inter-key delays, append or replace events,
+record supported keys, reorder steps, and see the exact 69-event hardware
+capacity before saving. See the [macro editor guide](docs/MACRO_EDITOR.md) for
+timing semantics and hardware limits.
 
 ![Macros tab](Macros.png)
+
+The manual builder creates matched mouse taps or individual press/release
+events and can bulk-edit selected delays.
+
+![Manual mouse macro events](MacroManual.png)
 
 ### RGB tab
 
@@ -112,9 +133,24 @@ Control LED color, brightness, and effect mode.
 
 ### DPI tab
 
-Configure up to 5 DPI presets across the 100-16,000 DPI range.
+Choose how many DPI stages are enabled and configure their values. The Areson
+model exposes five user-facing stages; Holtek profiles support up to ten at
+200-DPI increments and retain their current-stage and color-index metadata.
 
 ![DPI tab](DPI.png)
+
+### Holtek wired variant
+
+The Holtek-aware Buttons page exposes its physical DPI Up, DPI Down, and
+Profile Switch controls. Unsupported Areson-only actions and raw-report tabs
+are disabled instead of being sent through the wrong protocol.
+
+![Holtek button remapping](HoltekButtons.png)
+
+Holtek profiles can use 1–10 DPI stages and select the stage that becomes
+current after applying the profile.
+
+![Holtek DPI stages](HoltekDPI.png)
 
 ### Polling tab
 
@@ -127,11 +163,11 @@ Adjust the USB polling rate:
 
 ### Advanced tab
 
-Diagnostic and recovery tools, including factory reset and debug logging for raw HID communication.
+Areson-only diagnostic tools for building or sending raw 17-byte HID reports.
 
 ## Requirements
 
-- **Python 3.8+**
+- **Python 3.10+**
 - **hidapi**
 - **PyQt6**
 
@@ -171,7 +207,6 @@ access error after installation:
 For a read-only interface/access diagnostic (and optional battery query), run:
 
 ```bash
-python3 tools/diagnose_device.py
 python3 tools/diagnose_device.py --battery
 ```
 
@@ -203,10 +238,10 @@ Typical flow:
 
 1. Click **Read Settings** to load the current device state.
 2. Use the **Buttons** tab to choose a button and set an action.
-3. Click **Stage Binding** or rely on the auto-stage behavior when switching buttons.
+3. Click **Stage Binding** or rely on changes being staged as you edit.
 4. Click **Apply All Changes** to write staged bindings to the device.
-5. Use the **Macros** tab to record or build a macro, then click **Upload Macro**.
-6. Bind the macro to a button with **Bind to Button**.
+5. Use the **Macros** tab to record or build a macro, then click **Save to Mouse**.
+6. Bind the saved slot with **Bind Slot**.
 
 Practical notes:
 
@@ -214,8 +249,11 @@ Practical notes:
 - **Battery:** command `0x04` reports 0–10 battery steps and whether the cable is connected; it is a status query, not a write commit.
 - **Battery LED:** enable it in the RGB tab or tray menu, then close the window
   to leave the lightweight controller running in the desktop session.
-- **Factory reset:** the Advanced tab can restore defaults, but it also wipes custom macros.
+- **Factory reset:** the red device-status action restores Areson defaults, but
+  it also wipes custom macros.
 - **Read first:** when troubleshooting, start by reading the current device state before staging new writes.
+- **Random text timing:** random gaps are sampled when events are generated and
+  then stored as ordinary fixed delays in the hardware slot.
 
 ## Known limitations
 
@@ -227,6 +265,11 @@ Practical notes:
   DPI Down, so those two buttons can be rebound on that variant.
 - Mouse movement is not accepted by the vendor macro converter. Native macro
   clicks are supported; relative pointer movement is not currently offered.
+- Hardware macros are confirmed only for the Areson `25a7:fa07/fa08` family.
+  The Macros tab is disabled for the Holtek controller rather than guessing at
+  an incompatible storage format.
+- Holtek keyboard-button records contain one HID usage and no modifier field;
+  the UI disables modifier checkboxes for that controller.
 - The Areson lighting command is an EEPROM write rather than a known volatile
   LED command. Battery LED mode therefore writes only on a reported 10% step
   change and restores the prior lighting on normal application exit.
@@ -238,17 +281,29 @@ Useful repo entry points if you want to inspect or extend the protocol work:
 - `PROTOCOL.md`: current USB HID protocol specification
 - `old_stuff/win.md`: archived notes on the Windows utility behavior
 - `venus_protocol.py`: core protocol implementation
+- `holtek_protocol.py`: Holtek profile, button, DPI, lighting, and polling protocol
 - `staging_manager.py`: change staging system
 - `transaction_controller.py`: HID transaction handling
+- `docs/MACRO_EDITOR.md`: macro workflows, timing semantics, and limits
 
 Run the capture-backed, hardware-safe regression set explicitly:
 
 ```bash
 python3 -m unittest \
-  tests.test_areson_protocol_offline tests.test_battery_led_gui \
+  tests.test_areson_protocol_offline tests.test_holtek_protocol_offline \
+  tests.test_battery_led_gui tests.test_macro_editor \
   tests.test_protocol tests.test_rgb tests.test_staging \
   tests.test_atomic_controller tests.test_error_recovery
 ```
+
+Regenerate the README screenshots without opening a HID device:
+
+```bash
+QT_QPA_PLATFORM=offscreen python3 tools/capture_ui_screenshots.py
+```
+
+The renderer uses illustrative configuration values and never writes to a
+mouse.
 
 Do not treat unrestricted test discovery as hardware-safe. Several older
 files under `tests/` and `tools/` are preserved exploratory/replay programs;

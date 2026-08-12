@@ -498,14 +498,11 @@ class HoltekDevice:
         data = self.read_memory(ADDR_ACTIVE_PROFILE, 1)
         return data[0] & 0x7F
 
-    def read_dpi_stages(self, profile: int = 0) -> list[int]:
-        """Read DPI stage values from the per-profile region.
+    def read_dpi_profile(self, profile: int = 0) -> dict:
+        """Read DPI values, color indices, and current stage for a profile.
 
         Header at profile_base: [num_stages, 0x00, current_idx, 0x00]
         Entries at profile_base+4: 6 bytes each [0x01, raw_dpi, color, 0, 0, 0]
-
-        Returns:
-            List of DPI values in CPI (e.g., [800, 1600, 3200, ...]).
         """
         if profile < 0 or profile > 4:
             raise ValueError(f"Profile must be 0-4, got {profile}")
@@ -528,16 +525,29 @@ class HoltekDevice:
             chunk = self.read_memory(addr, min(8, total_bytes - offset))
             raw_data.extend(chunk)
 
-        dpi_list = []
+        dpi_list: list[int] = []
+        color_indices: list[int] = []
         for i in range(num_stages):
             entry_start = i * DPI_ENTRY_SIZE
-            if entry_start + 1 >= len(raw_data):
+            if entry_start + 2 >= len(raw_data):
                 break
             raw_dpi = raw_data[entry_start + 1]  # byte 1 = raw DPI value
             if raw_dpi == 0:
                 break
             dpi_list.append(raw_to_dpi(raw_dpi))
-        return dpi_list
+            color_indices.append(raw_data[entry_start + 2])
+        current_stage = min(header[2], max(0, len(dpi_list) - 1))
+        return {
+            "stages": dpi_list,
+            "colors": color_indices,
+            "current_stage": current_stage,
+            "header": bytes(header),
+            "raw_entries": bytes(raw_data),
+        }
+
+    def read_dpi_stages(self, profile: int = 0) -> list[int]:
+        """Read DPI stage values from the per-profile region."""
+        return list(self.read_dpi_profile(profile)["stages"])
 
     def read_current_dpi_stage(self, profile: int = 0) -> int:
         """Read the current DPI stage index from per-profile header."""
@@ -673,16 +683,16 @@ def read_all_config(device: HoltekDevice, profile: int | None = None) -> dict:
     else:
         read_profile = config['active_profile']
 
-    # Read DPI stages for the selected profile
+    # Read all DPI metadata together so applying an edit can preserve the
+    # per-stage color indices and current-stage field.
     try:
-        config['dpi_stages'] = device.read_dpi_stages(read_profile)
+        dpi_profile = device.read_dpi_profile(read_profile)
+        config['dpi_stages'] = dpi_profile['stages']
+        config['dpi_colors'] = dpi_profile['colors']
+        config['dpi_stage_current'] = dpi_profile['current_stage']
     except Exception:
         config['dpi_stages'] = []
-
-    # Read current DPI stage index
-    try:
-        config['dpi_stage_current'] = device.read_current_dpi_stage(read_profile)
-    except Exception:
+        config['dpi_colors'] = []
         config['dpi_stage_current'] = 0
 
     # Read LED settings from per-profile address
@@ -800,8 +810,7 @@ def build_button_entry(action: str, params: dict) -> bytes:
     elif action == "Disabled":
         return bytes([BTN_DISABLED, 0x00, 0x00, 0x00])
 
-    # Default: disabled
-    return bytes([BTN_DISABLED, 0x00, 0x00, 0x00])
+    raise ValueError(f"Unsupported Holtek button action: {action}")
 
 
 def build_write_packets(button_index: int, action: str, params: dict,
@@ -863,7 +872,9 @@ def build_button_map_packets(buttons: list[tuple[str, dict]],
     return packets
 
 
-def build_dpi_packets(dpi_values: list[int], profile: int = 0) -> list[bytes]:
+def build_dpi_packets(dpi_values: list[int], profile: int = 0,
+                      current_stage: int = 0,
+                      color_indices: list[int] | None = None) -> list[bytes]:
     """Build packets to write DPI configuration to the per-profile region.
 
     Per-profile DPI at profile_base + 4, 6 bytes per entry:
@@ -875,8 +886,13 @@ def build_dpi_packets(dpi_values: list[int], profile: int = 0) -> list[bytes]:
     """
     packets = []
 
-    if not dpi_values or profile < 0 or profile > 4:
-        return packets
+    if not 1 <= len(dpi_values) <= 10:
+        raise ValueError("Holtek DPI profiles require 1..10 stages")
+    if profile < 0 or profile > 4:
+        raise ValueError("Holtek profile must be 0..4")
+    if not 0 <= current_stage < len(dpi_values):
+        raise ValueError("current DPI stage is outside the enabled stage range")
+    colors = list(color_indices or [])
 
     base = PROFILE_BASE_ADDRS[profile]
 
@@ -889,14 +905,16 @@ def build_dpi_packets(dpi_values: list[int], profile: int = 0) -> list[bytes]:
     hdr_pkt[4] = 4  # 4 header bytes
     hdr_pkt[8] = len(dpi_values)
     hdr_pkt[9] = 0x00
-    hdr_pkt[10] = 0x00  # current stage = 0
+    hdr_pkt[10] = current_stage & 0xFF
     hdr_pkt[11] = 0x00
     packets.append(bytes(hdr_pkt))
 
     # Build 6-byte entries
     entry_data = bytearray()
-    for dpi in dpi_values:
-        entry_data.extend([0x01, dpi_to_raw(dpi), 0x00, 0x00, 0x00, 0x00])
+    for index, dpi in enumerate(dpi_values):
+        color = colors[index] if index < len(colors) else 0
+        entry_data.extend(
+            [0x01, dpi_to_raw(dpi), color & 0xFF, 0x00, 0x00, 0x00])
 
     # Write entries at base+4 in 8-byte chunks
     entry_addr = base + 4
@@ -960,7 +978,8 @@ def build_polling_packet(rate: int) -> bytes:
     return bytes(pkt)
 
 
-def button_action_to_gui(btn_type: int, code: int) -> tuple[str, dict]:
+def button_action_to_gui(btn_type: int, code: int,
+                         type_hi: int = 0) -> tuple[str, dict]:
     """Convert Holtek button type/code to GUI action/params format.
 
     Returns: (action_name, params_dict) matching the GUI's format.
@@ -982,7 +1001,7 @@ def button_action_to_gui(btn_type: int, code: int) -> tuple[str, dict]:
     elif btn_type == BTN_PROFILE:
         return "Profile Switch", {}
     elif btn_type == BTN_FIRE:
-        return "Fire Key", {"repeat": code}
+        return "Fire Key", {"repeat": type_hi}
     elif btn_type == BTN_KEYBOARD:
         return "Keyboard Key", {"key": code, "mod": 0}
     elif btn_type == BTN_DISABLED:

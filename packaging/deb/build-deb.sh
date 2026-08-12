@@ -17,21 +17,31 @@ mkdir -p "${PKG_DIR}/usr/share/venusprolinux"
 mkdir -p "${PKG_DIR}/usr/share/applications"
 mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/512x512/apps"
 mkdir -p "${PKG_DIR}/usr/share/doc/venusprolinux"
+mkdir -p "${PKG_DIR}/usr/share/metainfo"
+mkdir -p "${PKG_DIR}/usr/lib/udev/rules.d"
 
 # Copy application files
 cp "${SCRIPT_DIR}/venus_gui.py" "${PKG_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/venus_protocol.py" "${PKG_DIR}/usr/share/venusprolinux/"
+cp "${SCRIPT_DIR}/holtek_protocol.py" "${PKG_DIR}/usr/share/venusprolinux/"
+cp "${SCRIPT_DIR}/device_driver.py" "${PKG_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/staging_manager.py" "${PKG_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/transaction_controller.py" "${PKG_DIR}/usr/share/venusprolinux/"
 cp "${SCRIPT_DIR}/mouseimg.png" "${PKG_DIR}/usr/share/venusprolinux/"
 
 # Copy icon and desktop file
 cp "${SCRIPT_DIR}/icon.png" "${PKG_DIR}/usr/share/icons/hicolor/512x512/apps/venusprolinux.png"
-cp "${SCRIPT_DIR}/venusprolinux.desktop" "${PKG_DIR}/usr/share/applications/"
+cp "${SCRIPT_DIR}/packaging/linux/venusprolinux.desktop" \
+    "${PKG_DIR}/usr/share/applications/venusprolinux.desktop"
+cp "${SCRIPT_DIR}/com.github.es00bac.venusprolinux.appdata.xml" \
+    "${PKG_DIR}/usr/share/metainfo/"
+cp "${SCRIPT_DIR}/packaging/linux/99-venus-pro.rules" \
+    "${PKG_DIR}/usr/lib/udev/rules.d/"
 
 # Copy documentation
 cp "${SCRIPT_DIR}/README.md" "${PKG_DIR}/usr/share/doc/venusprolinux/"
 cp "${SCRIPT_DIR}/PROTOCOL.md" "${PKG_DIR}/usr/share/doc/venusprolinux/"
+cp "${SCRIPT_DIR}/docs/MACRO_EDITOR.md" "${PKG_DIR}/usr/share/doc/venusprolinux/"
 cp "${SCRIPT_DIR}/LICENSE" "${PKG_DIR}/usr/share/doc/venusprolinux/copyright"
 
 # Create launcher script
@@ -50,14 +60,14 @@ Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.8), python3-hidapi, python3-pyqt6
+Depends: python3 (>= 3.10), python3-hidapi, python3-pyqt6
 Recommends: python3-evdev
 Maintainer: Es00bac <es00bac@github.com>
 Homepage: https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
 Description: Linux configuration utility for UtechSmart Venus Pro MMO mouse
  A professional configuration utility for the UtechSmart Venus Pro MMO
- gaming mouse on Linux. Features button remapping, macro editor, RGB
- lighting control, DPI profiles, and polling rate adjustment.
+ gaming mouse on Linux. Features controller-aware button remapping, text and
+ mouse-event macros, RGB lighting, DPI profiles, and battery monitoring.
 EOF
 
 # Create postinst script
