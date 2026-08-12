@@ -1,257 +1,388 @@
-# UtechSmart Venus Pro USB HID Protocol
+# UtechSmart Venus mouse protocols
 
-This is the single source of truth for the Venus Pro configuration protocol, derived
-from captures and the current `venus_protocol.py` implementation. Wired and wireless
-mode share the same configuration format and commands.
+This document separates two unrelated protocols that are sold under similar
+Venus names. It is derived from the repository's USBPcap traces, EEPROM dumps,
+live Linux USB descriptors, and decompilation of the bundled Windows utility.
 
-## Device IDs and Interfaces
+Evidence labels used below:
 
-- **Vendor IDs**: `0x25A7`, `0x04D9`
-- **Product IDs**:
-  - `0xFA07` = Venus Pro Wireless Receiver (2.4GHz dongle)
-  - `0xFA08` = Venus Pro Wired (dual mode mouse via USB)
-  - `0xFC55` = Venus MMO Wired
+- **Capture** — directly present in USB traffic.
+- **Binary** — implemented by the vendor utility.
+- **Descriptor** — declared by the live USB/HID descriptor.
+- **Live** — reproduced with a read-only query against the connected device.
+- **Inference** — consistent with the evidence, but its user-facing meaning is
+  not completely proved.
 
-- Configuration is sent as HID **Feature Reports** on the vendor interface.
-  - Interface `1` is the preferred config interface.
-  - Interface `0` is accepted on some firmware; the code will try both.
+## Protocol families
 
-## Report Format
+| USB ID | Controller/family | Config interface | Protocol |
+|---|---|---:|---|
+| `25a7:fa07` | Areson/Compx wireless receiver | 1 | 17-byte reports described below |
+| `25a7:fa08` | Areson/Compx wired connection | 1 | Same Areson protocol |
+| `04d9:fc55` | Holtek wired Venus MMO | 2 | Separate `F1/F2/F3/F5` protocol |
 
-All configuration packets are 17 bytes:
+Do not send Areson packets to the Holtek device. The Holtek implementation and
+its five-profile memory map are documented in `holtek_protocol.py`.
 
+## Areson transport (`25a7:fa07` and `25a7:fa08`)
+
+The device has separate boot-mouse and keyboard/vendor HID interfaces. The
+configuration channel is interface 1. On the live `fa07` descriptor:
+
+- feature report `0x08` is 17 bytes and belongs to vendor usage page `0xff02`;
+- interrupt-IN report `0x09` is 17 bytes and belongs to vendor usage page
+  `0xff01`;
+- responses arrive on endpoint `0x82`.
+
+This is a request/response channel, not one bidirectional report. Requests are
+sent with HID `SET_REPORT(Feature)` (`wValue=0x0308`, `wIndex=1`) and responses
+arrive asynchronously as interrupt report `0x09`. **Descriptor, Capture**
+
+### Packet format
+
+Every request and response is exactly 17 bytes:
+
+```text
+00     report ID: 08 request, 09 response
+01     command
+02     reserved (00 in every captured protocol packet)
+03-04  16-bit address, big-endian (commands 07/08)
+05     data length
+06-15  up to 10 data bytes, zero-padded on requests
+16     checksum
 ```
-Byte 0  : Report ID (0x08)
-Byte 1  : Command ID
-Byte 2-15 : Payload (14 bytes)
-Byte 16 : Checksum
-```
 
-Checksum calculation (sum of bytes 0..15 must equal 0x55):
+The checksum invariant is:
+
 ```python
-checksum = (0x55 - sum(bytes[0:16])) & 0xFF
+sum(packet) & 0xff == 0x55
+checksum = (0x55 - sum(packet[0:16])) & 0xff
 ```
 
-Responses arrive as Report ID `0x09`, echoing the command. For reads (`0x08`),
-the response payload includes `[page][offset][len][data...]`.
+The old documentation called bytes 3 and 4 “profile page” and “offset.” That
+representation can construct the bytes, but the vendor binary treats them as
+one 16-bit EEPROM address. The Areson model configuration exposes one hardware
+profile (`ShowProSw=0`); adding `0x40/0x80/0xc0` to page numbers writes unrelated
+high EEPROM regions. **Capture, Binary**
 
-## Command Summary
+### Commands
 
-| Cmd | Description |
-|-----|-------------|
-| `0x03` | Handshake / ready |
-| `0x04` | Prepare / commit (sent before and after write sequences) |
-| `0x07` | Write flash (page/offset addressing) |
-| `0x08` | Read flash |
-| `0x09` | Reset to defaults |
-| `0x4D`, `0x01` | Magic unlock sequence for macro/page-3 writes |
+| Command | Request | Response and meaning | Evidence |
+|---:|---|---|---|
+| `01` | length 4, random challenge | length 4, transformed challenge | Capture, Binary |
+| `02` | length 1, data `01` | echoes `01`; enables/announces driver state | Capture; semantic name is Inference |
+| `03` | empty | length 1, data `01`; ready/begin-operation handshake | Capture, Binary |
+| `04` | empty | length 2: battery step, cable flag | Capture, Binary |
+| `07` | address, length, data | acknowledges/echoes the write | Capture, Binary |
+| `08` | address and length | returns length and EEPROM data | Capture, Binary |
+| `09` | empty | factory reset; erases settings and macros | Capture, Binary |
 
-Typical write flow:
-1. `0x03` (handshake)
-2. One or more `0x07` writes
-3. `0x04` (commit)
+There is no command `0x4d` in any supplied capture. It was an artifact of the
+old implementation. Likewise, command `0x04` is not prepare/commit. EEPROM
+writes persist after their `0x07` acknowledgement; the Windows utility does not
+send a commit after each write group. **Capture, Binary**
 
-## Addressing and Profiles
+#### Challenge response (`01`)
 
-Flash is 256 pages × 256 bytes. Write/read payloads use:
-```
-[0x00, page, offset, length, data...]
-```
+For challenge bytes `a,b,c,d`, the expected response is:
 
-For `0x07` writes, `length` is typically ≤ 10 bytes; larger writes require multiple packets.
-
-**Profile Base Offsets** (add to page number for profile-specific data):
-- Profile 1: `0x00`
-- Profile 2: `0x40`
-- Profile 3: `0x80`
-- Profile 4: `0xC0`
-
-## Button Map
-
-Each button has:
-- **Keyboard definition slot**: `code_hi` (page), `code_lo` (offset within page)
-- **Apply slot**: `apply_offset` in Page `0x00 + profile_base`
-
-| Button | Label | code_hi | code_lo | apply_offset |
-|--------|-------|---------|---------|--------------|
-| 1 | Side Button 1 | 0x01 | 0x00 | 0x60 |
-| 2 | Side Button 2 | 0x01 | 0x20 | 0x64 |
-| 3 | Side Button 3 | 0x01 | 0x40 | 0x68 |
-| 4 | Side Button 4 | 0x01 | 0x60 | 0x6C |
-| 5 | Side Button 5 | 0x01 | 0x80 | 0x70 |
-| 6 | Side Button 6 | 0x01 | 0xA0 | 0x74 |
-| 7 | Side Button 7 | 0x02 | 0x00 | 0x80 |
-| 8 | Side Button 8 | 0x02 | 0x20 | 0x84 |
-| 9 | Side Button 9 | 0x02 | 0x80 | 0x90 |
-| 10 | Side Button 10 | 0x02 | 0xA0 | 0x94 |
-| 11 | Side Button 11 | 0x02 | 0xC0 | 0x98 |
-| 12 | Side Button 12 | 0x02 | 0xE0 | 0x9C |
-| 13 | Fire Key | 0x02 | 0x60 | 0x8C |
-| 14 | Left Mouse Button | 0x01 | 0xE0 | 0x7C |
-| 15 | Middle Mouse Button | 0x02 | 0x40 | 0x88 |
-| 16 | Right Mouse Button | 0x01 | 0xC0 | 0x78 |
-
-## Button Type Codes
-
-| Type | Value | Description |
-|------|-------|-------------|
-| Disabled | `0x00` | Button does nothing |
-| Mouse | `0x01` | Mouse button (d1 = button mask) |
-| DPI Legacy | `0x02` | DPI control |
-| Special | `0x04` | Fire Key / Triple Click (d1 = delay, d2 = repeat) |
-| Keyboard | `0x05` | Standard keyboard key |
-| Macro | `0x06` | Macro (d1 = index, d2 = repeat mode) |
-| Poll Rate Toggle | `0x07` | Toggle polling rate |
-| RGB Toggle | `0x08` | Toggle RGB LED |
-
-**Mouse Button Masks (Type 0x01):**
-- `0x01` = Left Click
-- `0x02` = Right Click
-- `0x04` = Middle Click
-- `0x08` = Back
-- `0x10` = Forward
-
-## Keyboard Definition Slots
-
-Keyboard slots are stored at `code_hi + profile_base` page, `code_lo` offset, in 0x20-byte blocks.
-
-**Simple key (no modifiers):**
-```
-count = 2
-events: [0x81, key, 0x00] [0x41, key, 0x00]
-guard = (0x91 - (key * 2)) & 0xFF
+```text
+r0 = a + b + 5
+r1 = 2*b + c
+r2 = 3*c + d
+r3 = 4*d + a
 ```
 
-**Key with modifier:**
+All operations are modulo 256. Five independent captured challenge pairs match
+this formula. The old code replayed one pair and mislabeled it an unlock. The
+vendor utility generates each challenge byte in the range 1–100 and verifies
+the response. **Capture, Binary**
+
+#### Vendor startup sequence
+
+The Windows utility performs this non-destructive sequence:
+
+1. `03` ready
+2. `01` random challenge
+3. `08` read two bytes at `0x0004`
+4. `02` with data `01`
+5. configuration reads
+6. `04` status query
+
+Writing normally begins with `03`, followed by one or more `07` writes. Factory
+reset (`09`) is never part of session setup. **Capture, Binary**
+
+### Battery and connection status (`04`)
+
+The two response bytes are:
+
+```text
+data[0]  battery step, 0..10 (display as step * 10 percent)
+data[1]  0 = wireless path, 1 = USB cable/wired path
 ```
-count = 4
-events: [0x80, mod, 0x00] [0x81, key, 0x00] [0x40, mod, 0x00] [0x41, key, 0x00]
-guard = (0x91 - (key * 2) + 0x3A) & 0xFF
+
+Observed responses include `0a 00`, `0a 01`, `07 01`, and `06 00`. A direct
+Linux status query on the connected `25a7:fa07` also returned `06 00`. Capture
+filenames and connection state correlate the second byte with cable/wired
+operation. It should not be labeled “charging” unless charging is independently
+confirmed for a particular firmware. **Capture, Live; cable meaning is strong
+Inference**
+
+## Areson EEPROM map
+
+Only the following range is used by the vendor application:
+
+| Address | Size | Meaning | Confidence |
+|---:|---:|---|---|
+| `0000` | 2 | polling code + record checksum | Capture, Binary |
+| `0002` | 2 | enabled DPI-stage count + checksum | Binary; meaning confirmed by layout |
+| `0004` | 2 | active/default DPI stage record | Startup read; exact semantics Inference |
+| `0006-000b` | 6 | additional DPI state records | Unknown |
+| `000c-002b` | 32 | eight possible DPI records, four bytes each | Capture, Binary |
+| `002c-005f` | 52 | DPI colors and lighting configuration | Capture, Binary |
+| `0060-009f` | 64 | 16 button action records | Capture, Binary |
+| `0100-02ff` | 512 | 16 event-definition slots, `0x20` bytes each | Capture, Binary |
+| `0300-1aff` | 6144 | 16 macro slots, `0x180` bytes each | Capture, Binary |
+
+The remainder of 64 KiB dumps is predominantly erased `ff` data. Reading it is
+useful for research, but it is not evidence for extra Areson profiles.
+
+### Polling rate
+
+The two-byte record at `0x0000` is `[code, 0x55-code]`:
+
+| Rate | Code | Check byte |
+|---:|---:|---:|
+| 125 Hz | `08` | `4d` |
+| 250 Hz | `04` | `51` |
+| 500 Hz | `02` | `53` |
+| 1000 Hz | `01` | `54` |
+
+The 250/500/1000 writes are directly captured; `08` for 125 is present in the
+vendor binary's read/write conversion. The prior `04/02/01/00` table was shifted
+and treated a valid `01` code as 500 Hz. **Capture, Binary**
+
+### DPI records
+
+Eight four-byte slots start at `0x000c`:
+
+```text
+[x_raw, y_raw, sensor_flag, inner_checksum]
+sum(record) & 0xff == 0x55
 ```
 
-**Modifier Bit Flags:**
-- `0x01` = Ctrl
-- `0x02` = Shift
-- `0x04` = Alt
-- `0x08` = Win/GUI
+The bundled driver contains sensor-specific DPI lookup tables rather than one
+universal linear formula. Its configuration names sensor families `0x3325` and
+`0x3335`; the active choice is influenced by the device version/sensor nibble.
+Consequently, arbitrary raw-to-DPI interpolation should be described as an
+approximation. Exact captured/default anchors include:
 
-## Macro Storage
+```text
+default:  1000=0b, 2000=17, 4000=2f, 8000=5f, 10000=bd
+captured edits: 1600=12, 2400=1b, 4900=3a, 8900=6a
+```
 
-Macro slots are 384 bytes (0x180) each, starting at page `0x03`:
+The fifth edited filename is ambiguous (`1410` vs `14100`) and is not used as a
+conversion anchor. Raw X/Y and the record checksum are known; a complete
+per-sensor DPI table remains an open item. **Capture, Binary**
+
+### Button action table
+
+There are 16 records at `0x0060 + 4*index`. Every record is:
+
+```text
+[type, d1, d2, inner_checksum]
+inner_checksum = (0x55 - type - d1 - d2) & 0xff
+```
+
+Physical mapping:
+
+| Internal index | Address | Physical control |
+|---:|---:|---|
+| 0–5 | `0060-0074` | side buttons 1–6 |
+| 6 | `0078` | right mouse button |
+| 7 | `007c` | left mouse button |
+| 8–9 | `0080-0084` | side buttons 7–8 |
+| 10 | `0088` | middle mouse button |
+| 11 | `008c` | fire button |
+| 12–15 | `0090-009c` | side buttons 9–12 |
+
+The physical top DPI buttons are absent from this Areson table. No capture or
+vendor configuration entry addresses them, so they appear firmware-fixed on
+`25a7:fa07/fa08`. The separate Holtek map does contain DPI Up and DPI Down and
+allows them to be assigned keyboard actions. **Capture, Binary**
+
+Action types:
+
+| Type | d1 | d2 | Meaning |
+|---:|---|---|---|
+| `00` | 0 | 0 | disabled |
+| `01` | mouse mask | 0 | native mouse button |
+| `02` | 1 loop, 2 up, 3 down | 0 | DPI control |
+| `04` | delay ms | repeat count | repeated left click/fire |
+| `05` | 0 | 0 | execute this index's event-definition slot |
+| `06` | macro slot 0–15 | repeat/mode | execute hardware macro |
+| `07` | 0 | 0 | cycle polling rate |
+| `08` | 0 | 0 | toggle lighting |
+| `09` | 0 | 0 | profile switch in generic vendor code; hidden here |
+
+Mouse masks are `01` left, `02` right, `04` middle, `08` back, and `10`
+forward. Thus the exact left-click record is `01 01 00 53`, not one of the old
+guessed `f0/f1/f2` records. **Capture, Binary**
+
+### Event-definition slots
+
+Button index `i` has a `0x20`-byte definition block at:
+
+```text
+address = 0x0100 + i * 0x20
+```
+
+The block begins with an event count, followed by three-byte events and one
+inner checksum. Unused bytes remain `ff`:
+
+```text
+[count] [status, code_lo, code_hi] ... [checksum] [ff ...]
+sum(count through checksum) & 0xff == 0x55
+```
+
+Statuses:
+
+- `81` / `41`: keyboard usage down/up
+- `80` / `40`: modifier down/up; codes `01/02/04/08` are Ctrl/Shift/Alt/GUI
+- `82` / `42`: 16-bit Consumer Page usage down/up
+
+Each modifier is a separate event. For Ctrl+Shift+1, the vendor emits six
+events: Ctrl down, Shift down, 1 down, Ctrl up, Shift up, 1 up. A combined
+modifier bitmask in one event is not equivalent. **Capture, Binary**
+
+### Macros
+
+There are 16 slots:
+
+```text
+slot_address = 0x0300 + slot_index * 0x0180
+slot_size    = 384 bytes
+```
+
+Layout:
+
+| Offset | Size | Meaning |
+|---:|---:|---|
+| `00` | 1 | UTF-16LE name length in bytes |
+| `01-1e` | 30 | name, zero padded (15 UTF-16 code units) |
+| `1f` | 1 | event count |
+| `20...` | 5 each | macro events |
+| after events | 4 | `[checksum, 00, 00, 00]` |
+
+The apparent `00 03` before the checksum in many traces is the final event's
+big-endian 3 ms delay. It is not part of a six-byte terminator.
+
+Each event is:
+
+```text
+[status, code, 00, delay_hi, delay_lo]
+```
+
+The status high bits encode direction (`80` down, `40` up); the low three bits
+encode class:
+
+| Status | Class |
+|---:|---|
+| `80/40` | modifier |
+| `81/41` | keyboard |
+| `84/44` | mouse button |
+
+Mouse event codes use the same `01/02/04/08/10` button masks. The bundled UI
+enables the first three through `MacroHasMsKey=0x07`; the converter itself also
+recognizes back and forward. It rejects other event classes, and the fixed
+five-byte representation has no accepted relative-movement class. Native mouse
+clicks are therefore supported; mouse movement is not. **Binary; left/right/
+middle UI behavior corroborated by issue report**
+
+Terminator checksum:
+
 ```python
-slot_addr = 0x300 + (index * 0x180)
-page = slot_addr >> 8
-offset = slot_addr & 0xFF
+checksum = (0x55 - event_count - sum(serialized_events)) & 0xff
 ```
 
-**Macro Buffer Layout:**
-| Offset | Size | Description |
-|--------|------|-------------|
-| 0x00 | 1 | Name length (bytes, UTF-16LE) |
-| 0x01-0x1E | 30 | Name bytes (UTF-16LE, ~15 chars) |
-| 0x1F | 1 | Event count |
-| 0x20+ | 5 each | Events |
+A slot can hold at most 69 events (`32 + 69*5 + 4 = 381`). The vendor forces a
+minimum event delay of 3 ms during conversion. **Capture, Binary**
 
-**Event Format (5 bytes):**
-```
-[status] [keycode] [00] [delay_hi] [delay_lo]
-```
-- `0x81` = Key down
-- `0x41` = Key up
-- `0x80` = Modifier down
-- `0x40` = Modifier up
+Macro action repeat byte:
 
-**Macro Terminator (6 bytes):**
-```
-[00] [03] [checksum] [00] [00] [00]
-```
-Checksum: `(~sum(events) - event_count + 0x56) & 0xFF`
+- `01..fd`: repeat count
+- `fe`: repeat while the physical button is held
+- `ff`: toggle/continue until another activation
 
-**Macro Repeat Modes:**
-| Value | Mode |
-|-------|------|
-| `0x01` | Play once |
-| `0x02`-`0xFD` | Repeat N times |
-| `0xFE` | Repeat while held |
-| `0xFF` | Toggle on/off |
+### Lighting records
 
-## DPI Configuration
+The following write shapes are directly observed and are implemented:
 
-DPI uses linear interpolation between known reference points:
+- steady/neon: 8 bytes at `0x0054`, containing RGB + RGB checksum, mode + mode
+  checksum, and brightness + brightness checksum;
+- off: `00 55` at `0x0058`;
+- breathing/alternate effect: `03 52` at `0x005c`.
 
-| DPI | Value | Tweak |
-|-----|-------|-------|
-| 1000 | 0x0B | 0x3F |
-| 2000 | 0x17 | 0x27 |
-| 4000 | 0x2F | 0xF7 |
-| 8000 | 0x5F | 0x97 |
-| 10000 | 0xBD | 0xDB |
+All inner two-/four-/eight-byte records retain the `sum == 0x55` invariant.
+The generic vendor binary also contains “stream”/main-lighting branches, but
+this mouse's configuration hides some of them. Those branches should not be
+claimed as confirmed Areson features until a matching capture exists.
 
-**Tweak Calculation:**
-```python
-tweak = (0x55 - (value * 2)) & 0xFF
-```
+The lowest captured steady-light brightness pair is `01 54` (brightness byte
+plus its `0x55` complement). Battery LED mode uses that exact pair. Its
+application-level color mapping is full-saturation red at 0%, yellow at 50%,
+and green at 100%, linearly interpolated through orange/yellow-green. Because
+status command `04` reports only 11 levels, the physical LED has 11 gradient
+steps. The controller writes only when that level changes and restores the
+previous lighting on a normal exit; no volatile Areson LED command has been
+confirmed. **Capture; controller policy**
 
-**DPI Slot Addresses:**
-Five slots at page `0x00 + profile_base`, offsets `0x0C`, `0x10`, `0x14`, `0x18`, `0x1C`.
+## Holtek summary (`04d9:fc55`)
 
-## Polling Rate
+The Holtek device uses interface 2, report `02` (16 bytes) and report `03` (64
+bytes), with feature-report reads rather than Areson's interrupt response. Its
+commands are:
 
-Polling rate is stored at page `0x00 + profile_base`, offset `0x00`:
+- `f1` write control/commit categories
+- `f2` memory read
+- `f3` memory write
+- `f5` polling rate
 
-| Rate (Hz) | Code | Guard |
-|-----------|------|-------|
-| 125 | 0x04 | 0x51 |
-| 250 | 0x02 | 0x53 |
-| 500 | 0x01 | 0x54 |
-| 1000 | 0x00 | 0x55 |
+It has five real hardware profiles and a 20-entry button map. Entries 4 and 5
+(zero-based indices) are physical DPI Up and DPI Down, so those controls can be
+rebound. Areson profile bases, checksums, command `04`, and macro layout do not
+apply to it. See `holtek_protocol.py` for the complete implemented map.
 
-**Packet format:**
-```
-[00, 00, 00, 02, rate_code, rate_guard, 00...]
-```
+## Remaining unknowns
 
-## RGB / Lighting
+- Exact user-facing meaning of Areson records `0x0004..0x000b`.
+- Complete DPI lookup tables for every Areson sensor/version combination.
+- Whether the generic vendor “stream” lighting path is reachable on this exact
+  firmware.
+- Whether macro back/forward events are accepted by firmware as well as by the
+  vendor converter (left/right/middle are the supported UI subset).
 
-RGB uses different packet formats depending on mode:
+These are intentionally marked unknown rather than filled with guessed magic
+values.
 
-**Mode Constants:**
-| Mode | Value |
-|------|-------|
-| Off | `0x00` |
-| Steady | `0x01` |
-| Neon | `0x02` |
-| Breathing | `0x03` |
+## Reproducing the analysis
 
-**Steady/Neon (offset 0x54):**
-```
-[00, 00, 54, 08, R, G, B, ColorChk, Mode, 54, B1, B2, 00, 00]
-```
-- `ColorChk = (0x55 - (R + G + B)) & 0xFF`
-- `B1 = brightness * 3` (capped 1-255)
-- `B2 = (0x55 - B1) & 0xFF`
-- Mode: `0x01` for Steady, `0x02` for Neon
+`tools/decode_areson_pcap.py` decodes report framing, checksums, addresses, and
+known regions directly from the repository's USBPcap files. For example:
 
-**Breathing (offset 0x5C):**
-```
-[00, 00, 5C, 02, 03, 52, 00, 00, 00, 00, 00, 00, 00, 00]
-```
-(Fixed format, cycles through colors)
-
-**Off (offset 0x58):**
-```
-[00, 00, 58, 02, 00, 55, 00, 00, 00, 00, 00, 00, 00, 00]
+```bash
+python3 tools/decode_areson_pcap.py \
+  "usbcap/usb polling rate from 125 to 250 to 500 to 1000.pcapng" --hex
 ```
 
-## Media Key Codes
+The binary analysis used the bundled 32-bit
+`UtechSmart/Venus wireless/OemDrv.exe` (SHA-256
+`28bab71de7267c0872f8c54baeb14bfdae0859ee6dabf309067c95ae7ea3d8c8`). The
+Ghidra post-scripts `GhidraProtocolExport.java`, `GhidraDecompileRange.java`,
+and `GhidraDumpMemory.java` under `tools/` reproduce the string-xref,
+decompilation, and lookup-table extraction steps.
 
-Media keys use USB HID Consumer Page codes:
-
-| Function | Code |
-|----------|------|
-| Play/Pause | 0xCD |
-| Next Track | 0xB5 |
-| Prev Track | 0xB6 |
-| Mute | 0xE2 |
-| Volume Up | 0xE9 |
-| Volume Down | 0xEA |
+For live troubleshooting without EEPROM writes, `tools/diagnose_device.py`
+lists the chosen configuration interface. Its optional `--battery` flag sends
+only status command `0x04`.

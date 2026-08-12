@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Optional
-
-import hid
-import time
+import secrets
 import sys
+import threading
+import time
+from dataclasses import dataclass
+from typing import Iterable
+
+try:
+    import hid
+    HIDAPI_AVAILABLE = True
+except ImportError:
+    hid = None
+    HIDAPI_AVAILABLE = False
 
 try:
     import usb.core
@@ -24,10 +31,11 @@ def reclaim_device(vendor_id: int, product_id: int) -> bool:
         return False
         
     try:
-        # For each interface, try to re-attach
+        # For each interface through the vendor configuration interface, try
+        # to re-attach.  Holtek uses interface 2, while Areson uses 1.
         # This will fail if another process has a persistent LOCK, 
         # but can break simple captures.
-        for iface in [0, 1]:
+        for iface in range(expected_interface(vendor_id, product_id) + 1):
             try:
                 # First, try to detach if a non-kernel driver is active
                 # (PyUSB doesn't tell us WHO has it, just if it's kernel or not)
@@ -68,7 +76,7 @@ def is_device_busy(vendor_id: int, product_id: int) -> bool:
     # If not active, and hidapi didn't see it, it's likely captured via usbfs
     try:
         busy = False
-        for iface in [0, 1]:
+        for iface in range(expected_interface(vendor_id, product_id) + 1):
             if not dev.is_kernel_driver_active(iface):
                 busy = True
                 break
@@ -77,81 +85,24 @@ def is_device_busy(vendor_id: int, product_id: int) -> bool:
         return True # Assume busy if we can't even check
 
 def try_unlock_device() -> bool:
-    """Attempts to unlock the device by sending magic packets via pyusb.
-    
-    This is required if the device is in a weird state or not accepting commands.
+    """Deprecated compatibility shim.
+
+    Captures and the vendor binary contain no ``0x4d`` unlock command.  Older
+    versions also put the destructive ``0x09`` factory-reset command in an
+    "unlock" path.  Session setup now belongs to :meth:`VenusDevice.start_session`
+    and requires an already-selected config-interface path.
     """
-    if not PYUSB_AVAILABLE:
-        print("Unlock: python-pyusb not installed.")
-        return False
-
-    print("Attempting to unlock device...")
-    dev = None
-    for vid in VENDOR_IDS:
-        for pid in PRODUCT_IDS:
-            dev = usb.core.find(idVendor=vid, idProduct=pid)
-            if dev is not None:
-                break
-        if dev is not None:
-            break
-    
-    if dev is None:
-        print("Unlock: No device found.")
-        return False
-
-    # Detach Kernel Driver
-    reattach = []
-    for iface in [0, 1]:
-        if dev.is_kernel_driver_active(iface):
-            try:
-                dev.detach_kernel_driver(iface)
-                reattach.append(iface)
-                print(f"Detached kernel driver from iface {iface}")
-            except Exception as e:
-                print(f"Failed to detach iface {iface}: {e}")
-                return False
-
-    try:
-        usb.util.claim_interface(dev, 1)
-        
-        # Helper to send feature report to Interface 1
-        def send_magic(data):
-            padded = data.ljust(17, b'\x00')
-            dev.ctrl_transfer(0x21, 0x09, 0x0308, 1, padded)
-
-        # 1. SKIP Reset (Cmd 09) - Causes instability/re-enumeration issues
-        # send_magic(bytes([0x08, 0x09]))
-        # time.sleep(0.5)
-        
-        # 2. Magic packet 1 (CMD 4D)
-        # 08 4D 05 50 00 55 00 55 00 55 91
-        send_magic(bytes([0x08, 0x4D, 0x05, 0x50, 0x00, 0x55, 0x00, 0x55, 0x00, 0x55, 0x91]))
-        time.sleep(0.05)
-        
-        # 3. Magic packet 2 (CMD 01)
-        # 08 01 00 00 00 04 56 57 3d 1b 00 00
-        send_magic(bytes([0x08, 0x01, 0x00, 0x00, 0x00, 0x04, 0x56, 0x57, 0x3d, 0x1b, 0x00, 0x00]))
-        time.sleep(0.05)
-        
-        print("Unlock sequence sent.")
-        
-    except Exception as e:
-        print(f"Unlock error: {e}")
-    finally:
-        # Re-attach Check
-        for iface in reattach:
-            try:
-                dev.attach_kernel_driver(iface)
-                print(f"Re-attached kernel driver to iface {iface}")
-            except:
-                pass
-        # Wait for device to re-enumerate after driver re-attach
-        time.sleep(1.0)
-    return True
+    print("Unlock is obsolete; reconnect and use VenusDevice.start_session().", file=sys.stderr)
+    return False
 
 
-VENDOR_IDS = (0x25A7, 0x04D9)
-PRODUCT_IDS = (0xFA07, 0xFA08, 0xFC55)
+SUPPORTED_DEVICE_IDS = {
+    (0x25A7, 0xFA07),  # Areson/Compx wireless receiver
+    (0x25A7, 0xFA08),  # Areson/Compx wired connection
+    (0x04D9, 0xFC55),  # Holtek wired variant (different protocol)
+}
+VENDOR_IDS = tuple(sorted({vid for vid, _ in SUPPORTED_DEVICE_IDS}))
+PRODUCT_IDS = tuple(sorted({pid for _, pid in SUPPORTED_DEVICE_IDS}))
 # Map for friendly names
 DEVICE_NAMES = {
     (0x25A7, 0xFA07): "Venus Pro (Wireless)",
@@ -160,8 +111,18 @@ DEVICE_NAMES = {
 }
 
 REPORT_ID = 0x08
+RESPONSE_REPORT_ID = 0x09
 REPORT_LEN = 17
 CHECKSUM_BASE = 0x55
+MAX_DATA_LEN = 10
+
+CMD_CHALLENGE = 0x01
+CMD_NOTIFY = 0x02
+CMD_READY = 0x03
+CMD_STATUS = 0x04
+CMD_WRITE = 0x07
+CMD_READ = 0x08
+CMD_FACTORY_RESET = 0x09
 
 
 @dataclass(frozen=True)
@@ -266,14 +227,11 @@ RGB_QUICK_PICKS = [
 
 
 
+POLLING_RATE_CODES = {125: 0x08, 250: 0x04, 500: 0x02, 1000: 0x01}
+POLLING_CODE_TO_RATE = {code: rate for rate, code in POLLING_RATE_CODES.items()}
 POLLING_RATE_PAYLOADS = {
-    # Polling rate encoding: code = log2(1000/rate)
-    # From wired USB captures:
-    # 125Hz = code 0x04 (but pattern suggests 0x03?), 250Hz = 0x02, 500Hz = 0x01, 1000Hz = 0x00
-    125: bytes([0x00, 0x00, 0x00, 0x02, 0x04, 0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-    250: bytes([0x00, 0x00, 0x00, 0x02, 0x02, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-    500: bytes([0x00, 0x00, 0x00, 0x02, 0x01, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-    1000: bytes([0x00, 0x00, 0x00, 0x02, 0x00, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    rate: bytes([0x00, 0x00, 0x00, 0x02, code, (0x55 - code) & 0xFF]) + bytes(8)
+    for rate, code in POLLING_RATE_CODES.items()
 }
 
 
@@ -423,6 +381,7 @@ RGB_MODE_OFF = 0x00
 RGB_MODE_STEADY = 0x01
 RGB_MODE_NEON = 0x02
 RGB_MODE_BREATHING = 0x03  # Uses different packet format (offset 0x5C)
+RGB_MIN_BRIGHTNESS = 0  # build_rgb encodes this as the captured raw minimum 0x01
 
 # ASCII to HID mapping for Quick Text Macro
 # Maps char -> (keycode, modifier_mask)
@@ -456,6 +415,12 @@ MACRO_REPEAT_COUNT = 0x02    # Multi-repeat mode (GUI sentinel)
 MACRO_REPEAT_HOLD = 0xFE     # Repeat while button held
 MACRO_REPEAT_TOGGLE = 0xFF   # Toggle on/off
 # Note: Any value 0x01-0xFD is interpreted as a repeat count.
+MACRO_SLOT_SIZE = 0x180
+MACRO_HEADER_SIZE = 0x20
+MACRO_TERMINATOR_SIZE = 4
+MACRO_MAX_EVENTS = (
+    MACRO_SLOT_SIZE - MACRO_HEADER_SIZE - MACRO_TERMINATOR_SIZE
+) // 5
 
 
 # Mapping of Side Buttons (1-12) to internal Macro Slot Indices
@@ -473,15 +438,21 @@ def calc_checksum(prefix: Iterable[int]) -> int:
 
 
 def build_report(command: int, payload: Iterable[int]) -> bytes:
-    """Builds a 17-byte HID report with checksum at byte 16."""
+    """Build one 17-byte request feature report.
+
+    Byte 2 is reserved and is part of the command payload.  EEPROM commands
+    use bytes 3..4 as one big-endian 16-bit address; referring to them as a
+    profile and offset obscured the fact that this model has one profile.
+    """
     r = bytearray(REPORT_LEN)
     r[0] = REPORT_ID
-    r[1] = command
+    r[1] = command & 0xFF
     
     # Payload
     payload_bytes = bytes(payload)
-    plen = min(len(payload_bytes), 14)
-    r[2:2+plen] = payload_bytes[:plen]
+    if len(payload_bytes) > 14:
+        raise ValueError("report payload must be at most 14 bytes")
+    r[2:2 + len(payload_bytes)] = payload_bytes
     
     # Packet Checksum
     s_sum = sum(r[0:16]) & 0xFF
@@ -492,29 +463,73 @@ def build_simple(command: int) -> bytes:
     return build_report(command, bytes(14))
 
 
+def report_checksum_valid(report: Iterable[int]) -> bool:
+    raw = bytes(report)
+    return len(raw) == REPORT_LEN and (sum(raw) & 0xFF) == CHECKSUM_BASE
+
+
+def build_memory_write(address: int, data: bytes) -> bytes:
+    """Build an EEPROM write for an absolute 16-bit address."""
+    if not 0 <= address <= 0xFFFF:
+        raise ValueError("address must be 0x0000..0xffff")
+    if not 1 <= len(data) <= MAX_DATA_LEN:
+        raise ValueError(f"write data must contain 1..{MAX_DATA_LEN} bytes")
+    payload = bytes([
+        0x00,
+        (address >> 8) & 0xFF,
+        address & 0xFF,
+        len(data),
+    ]) + data.ljust(MAX_DATA_LEN, b"\x00")
+    return build_report(CMD_WRITE, payload)
+
+
 def build_flash_write(page: int, offset: int, data: bytes) -> bytes:
-    """Generic flash write packet (Cmd 0x07).
-    
-    Payload: [0x00, Page, Offset, Len, Data...]
-    Data is padded to 10 bytes.
-    """
-    dlen = len(data)
-    payload = bytes([0x00, page & 0xFF, offset & 0xFF, dlen & 0xFF]) + data.ljust(10, b'\x00')
-    return build_report(0x07, payload)
+    """Compatibility wrapper around :func:`build_memory_write`."""
+    return build_memory_write(((page & 0xFF) << 8) | (offset & 0xFF), data)
 
 
 def build_flash_read(page: int, offset: int, length: int) -> bytes:
-    """Build a flash memory read request.
-    
-    The response will arrive on the Interrupt In endpoint (Report ID 0x09).
-    Max reliable length per report is 10-11 bytes.
-    """
+    """Build a memory read; its response is interrupt-IN report ``0x09``."""
+    if not 1 <= length <= MAX_DATA_LEN:
+        raise ValueError(f"read length must be 1..{MAX_DATA_LEN}")
     payload = bytes([0x00, page & 0xFF, offset & 0xFF, length & 0xFF]) + bytes(10)
-    return build_report(0x08, payload)
+    return build_report(CMD_READ, payload)
 
 
-def build_key_binding(code_hi: int, code_lo: int, hid_key: int, modifier: int = 0x00) -> bytes:
-    """Build a key binding packet.
+def build_challenge(challenge: bytes) -> bytes:
+    if len(challenge) != 4:
+        raise ValueError("challenge must be exactly four bytes")
+    return build_report(CMD_CHALLENGE, bytes([0, 0, 0, 4]) + challenge + bytes(6))
+
+
+def challenge_response(challenge: bytes) -> bytes:
+    """Return the response expected by the vendor application's check."""
+    if len(challenge) != 4:
+        raise ValueError("challenge must be exactly four bytes")
+    a, b, c, d = challenge
+    return bytes(((a + b + 5) & 0xFF, (2 * b + c) & 0xFF,
+                  (3 * c + d) & 0xFF, (4 * d + a) & 0xFF))
+
+
+def build_notify_enable() -> bytes:
+    return build_report(CMD_NOTIFY, bytes([0, 0, 0, 1, 1]) + bytes(9))
+
+
+def _definition_write_packets(code_hi: int, code_lo: int, body: bytes) -> list[bytes]:
+    packets = []
+    address = ((code_hi & 0xFF) << 8) | (code_lo & 0xFF)
+    for start in range(0, len(body), MAX_DATA_LEN):
+        packets.append(build_memory_write(address + start, body[start:start + MAX_DATA_LEN]))
+    return packets
+
+
+def _definition_checksum(events: bytes, count: int) -> int:
+    return calc_checksum(bytes([count]) + events)
+
+
+def build_key_binding(code_hi: int, code_lo: int, hid_key: int,
+                      modifier: int = 0x00) -> list[bytes]:
+    """Build the event-definition writes for one keyboard binding.
     
     Args:
         code_hi: High byte of keyboard region address (page)
@@ -527,79 +542,39 @@ def build_key_binding(code_hi: int, code_lo: int, hid_key: int, modifier: int = 
     - ctrl-alt-1: 08 07 00 01 00 0a 06 80 01 00 80 04 00 81 1e [checksum]
     """
     
+    if not 0 <= hid_key <= 0xFF:
+        raise ValueError("hid_key must fit in one byte")
+    if modifier & ~0x0F:
+        raise ValueError("modifier may contain Ctrl, Shift, Alt, and Win only")
+
+    # The firmware does not accept a combined modifier mask as one event.  The
+    # Windows utility emits one event for every set bit, in this order.
+    modifier_values = [bit for bit in (MODIFIER_CTRL, MODIFIER_SHIFT,
+                                       MODIFIER_ALT, MODIFIER_WIN)
+                       if modifier & bit]
     events = bytearray()
-    
-    if modifier != 0:
-        # Complex Binding with Modifiers - FULL 4-EVENT STREAM
-        # Based on actual Windows dump analysis of Shift+A (B12):
-        # Data: 04 80 02 00 81 04 00 40 02 00 41 04 00 c3
-        # Format: [Count=4] [ModDn] [KeyDn] [ModUp] [KeyUp] [Guard]
-        
-        events.extend([0x80, modifier, 0x00])  # Event 1: ModDn
-        events.extend([0x81, hid_key, 0x00])   # Event 2: KeyDn
-        events.extend([0x40, modifier, 0x00])  # Event 3: ModUp
-        events.extend([0x41, hid_key, 0x00])   # Event 4: KeyUp
-        
-        count = 4  # Always 4 events for modifier bindings
-        full_payload = bytearray([count]) + events
-        
-        # Guard byte for complex bindings
-        # From dump: Shift+A (mod=0x02, key=0x04) -> Guard=0xC3
-        # Empirical formula: Simple guard + offset for event stream
-        simple_guard = (0x91 - (hid_key * 2)) & 0xFF
-        # The modifier events add ~0x3E offset based on analysis
-        guard = (simple_guard + 0x3A) & 0xFF
-        full_payload.append(guard)
-        
-        # Total: 1 + 12 + 1 = 14 bytes (will split into 10 + 4)
-        
-    else:
-        # Simple Binding (No Modifiers)
-        # Format: [Count=2] [KeyDn] [KeyUp] [Guard] = 8 bytes
-        events.extend([0x81, hid_key, 0x00])  # KeyDn
-        events.extend([0x41, hid_key, 0x00])  # KeyUp
-        
-        count = 2
-        full_payload = bytearray([count]) + events
-        
-        # Guard byte: 0x91 - (key * 2)
-        guard = (0x91 - (hid_key * 2)) & 0xFF
-        full_payload.append(guard)
-        
-        # Total: 1 + 6 + 1 = 8 bytes (fits in 1 packet)
-    
-    # Split payload into chunks of max 10 bytes for the 0x07 write command
-    packets = []
-    chunk_size = 10
-    total_len = len(full_payload)
-    
-    for i in range(0, total_len, chunk_size):
-        chunk = full_payload[i : i + chunk_size]
-        current_len = len(chunk)
-        
-        # Build Write Packet (Cmd 0x07)
-        # Payload: [00] [Page] [Offset+i] [Len] [Data...]
-        # Data chunk must be padded to 10 bytes to satisfy strict 14-byte payload check in build_report
-        padded_chunk = chunk.ljust(10, b'\x00')
-        
-        pkt_payload = bytes([
-            0x00,
-            code_hi,
-            code_lo + i,
-            current_len,
-        ]) + padded_chunk
-        
-        packets.append(build_report(0x07, pkt_payload))
-        
-    return packets
+    for value in modifier_values:
+        events.extend((0x80, value, 0x00))
+    events.extend((0x81, hid_key, 0x00))
+    for value in modifier_values:
+        events.extend((0x40, value, 0x00))
+    events.extend((0x41, hid_key, 0x00))
 
-def build_key_binding_apply(code_hi: int, code_lo: int, hid_key: int, modifier: int = 0x00) -> bytes:
-    """Build the second packet for key binding with modifiers.
-    
-    With Type 02 packets (which we now use exclusively), this second packet is NOT needed.
-    """
-    return b""
+    count = 2 + 2 * len(modifier_values)
+    body = bytes([count]) + bytes(events)
+    body += bytes([_definition_checksum(events, count)])
+    return _definition_write_packets(code_hi, code_lo, body)
 
+
+def build_consumer_binding(code_hi: int, code_lo: int, usage: int) -> list[bytes]:
+    """Build a two-event USB Consumer Page definition (media key)."""
+    if not 0 <= usage <= 0xFFFF:
+        raise ValueError("consumer usage must fit in 16 bits")
+    lo, hi = usage & 0xFF, (usage >> 8) & 0xFF
+    events = bytes((0x82, lo, hi, 0x42, lo, hi))
+    count = 2
+    body = bytes([count]) + events + bytes([_definition_checksum(events, count)])
+    return _definition_write_packets(code_hi, code_lo, body)
 
 def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: int = 100) -> bytes:
     """Build an RGB LED control packet.
@@ -612,8 +587,9 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
     Packet formats (from USB captures):
     
     Steady/Neon (offset 0x54):
-    [00, 00, 54, 08, R, G, B, ColorChk, Mode, 54, B1, B2, 00, 00]
+    [00, 00, 54, 08, R, G, B, ColorChk, Mode, ModeChk, B1, B2, 00, 00]
     - Mode: 0x01=Steady, 0x02=Neon
+    - ModeChk = (0x55 - Mode) & 0xFF
     - ColorChk = (0x55 - (R + G + B)) & 0xFF
     - B1 = brightness * 3, B2 = (0x55 - B1) & 0xFF
     
@@ -650,8 +626,10 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
         b1 = max(1, min(255, int(brightness * 3)))
         b2 = (0x55 - b1) & 0xFF
         
-        # For Neon, use mode 0x02; for Steady, use mode 0x01
+        # For Neon, use mode 0x02; for Steady, use mode 0x01.  The following
+        # byte is its 0x55 complement (0x53 for Neon, 0x54 for Steady).
         hw_mode = 0x02 if mode == RGB_MODE_NEON else 0x01
+        mode_chk = (0x55 - hw_mode) & 0xFF
         
         payload = bytes([
             0x00,
@@ -663,7 +641,7 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
             b,
             color_chk,  # Checksum for color
             hw_mode,    # Hardware mode (0x01=Steady, 0x02=Neon)
-            0x54,       # Constant
+            mode_chk,
             b1,         # Brightness value
             b2,         # Brightness complement
             0x00,
@@ -673,28 +651,40 @@ def build_rgb(r: int, g: int, b: int, mode: int = RGB_MODE_STEADY, brightness: i
     return build_report(0x07, payload)
 
 
-def build_apply_binding(apply_offset: int, action_type: int, action_code: int, action_index: int = 0x00, modifier: int = 0x00, page: int = 0x00) -> bytes:
-    # Packet structure for Page 0 (or Profile N) binding entry:
-    # [00] [Page] [Offset] [Len=04] [Type] [D1=Modifier] [D2=action_index] [D3=action_code] ...
-    payload = bytes(
-        [
-            0x00,
-            page,
-            apply_offset,
-            0x04,
-            action_type,
-            modifier,      # D1: Modifier goes here (Shift=0x02, Ctrl=0x01, etc.)
-            action_index,  # D2
-            action_code,   # D3
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ]
+def battery_gradient_rgb(percent: int) -> tuple[int, int, int]:
+    """Map battery percent onto red -> yellow -> green at full saturation."""
+    level = max(0, min(100, int(percent)))
+    if level <= 50:
+        return 255, round(255 * level / 50), 0
+    return round(255 * (100 - level) / 50), 255, 0
+
+
+def build_battery_indicator_rgb(percent: int) -> bytes:
+    """Build a steady battery-color write at the capture-confirmed minimum brightness."""
+    return build_rgb(
+        *battery_gradient_rgb(percent),
+        mode=RGB_MODE_STEADY,
+        brightness=RGB_MIN_BRIGHTNESS,
     )
-    return build_report(0x07, payload)
+
+
+def build_apply_binding(apply_offset: int, action_type: int,
+                        action_code: int | None = None,
+                        action_index: int = 0x00, modifier: int = 0x00,
+                        page: int = 0x00) -> bytes:
+    """Build a four-byte button action record.
+
+    The historical argument names are retained for callers: ``modifier`` is
+    action byte d1 and ``action_index`` is d2.  d3 is always the inner
+    checksum; accepting guessed d3 values was the cause of broken click and
+    DPI bindings.  ``action_code`` is ignored except for API compatibility.
+    """
+    del action_code
+    d1 = modifier & 0xFF
+    d2 = action_index & 0xFF
+    record = bytes((action_type & 0xFF, d1, d2,
+                    calc_checksum((action_type, d1, d2))))
+    return build_memory_write(((page & 0xFF) << 8) | (apply_offset & 0xFF), record)
 
 
 def build_keyboard_bind(apply_offset: int, page: int = 0x00) -> bytes:
@@ -711,90 +701,37 @@ def build_keyboard_bind(apply_offset: int, page: int = 0x00) -> bytes:
     d2 = 0x00
     d3 = (0x55 - (btype + d1 + d2)) & 0xFF # 0x50
     
-    payload = bytes([
-        0x00,
-        page,
-        apply_offset,
-        0x04,
-        btype,
-        d1,
-        d2,
-        d3,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    ])
-    return build_report(0x07, payload)
+    return build_memory_write(((page & 0xFF) << 8) | apply_offset,
+                              bytes((btype, d1, d2, d3)))
 
 
 def build_mouse_param(apply_offset: int, val: int, page: int = 0x00) -> bytes:
-    """Build a mouse button binding (Left/Right/etc).
+    """Build a native mouse-button binding.
     
     Args:
         apply_offset: Button offset.
         val: Mouse button code (1=Left, 2=Right, 4=Middle, 8=Back, 10=Forward).
-        page: Memory page (0x00, 0x40, etc).
+        page: High address byte; the exposed Areson action table uses page 0.
         
-    Packet structure inferred from capture contexts:
-    [00] [Page] [Offset] [Len=04] [Type=01] [Val] [00] [Code] ...
-    
-    Code mapping (Val -> Code):
-    - 0x01 (Left) -> 0xF0 (Guess/Standard?) - Wait, Forward/Back used 0x44/0x4C.
-    - Let's assume Code is not critical or is derived.
-    - Actually, build_forward_back uses explicit codes.
-    - If capture for Left Click (Btn 14, Offset 0x7C) is confusing, let's look at build_forward_back logic.
-    - Forward (0x10) -> 0x44. Back (0x08) -> 0x4c.
-    - Left/Right likely follow similar pattern or are hardcoded.
-    - Standard Mouse is Type 0x01.
+    The mask values are the same as HID mouse-button bits.  The final byte is
+    simply ``0x55 - (type + mask)`` for all five supported buttons.
     """
-    # Just use the generic payload with Type 0x01.
-    # What is D3 (Action Code)?
-    # For Forward/Back it was 0x44/0x4C.
-    # For Left/Right?
-    # Let's assume generic Type 0x01 doesn't STRICTLY verify D3 or it is 0x00?
-    # Or maybe valid vals: 
-    # Left (1) -> F0?
-    # Right (2) -> F1?
-    # Middle (4) -> F2?
-    # D3 seems to be 'Index'?
-    
-    # Safest bet: Just replicate build_apply_binding functionality for Type 0x01.
-    # D1 = val. D2 = 00. D3 = ?
-    # Let's assume D3 is not strictly checked for basic buttons or is 0.
-    
-    # Wait, build_forward_back sets D3=44/4C.
-    # Maybe I should just expose build_apply_binding and let caller handle code?
-    # But venus_gui calls build_mouse_param(offset, val).
-    
-    # Let's map val to something reasonable or just 0 if unknown.
-    code = 0x00
-    if val == 0x10: code = 0x44 # Forward
-    elif val == 0x08: code = 0x4C # Back
-    elif val == 0x01: code = 0xF0 # Left (Guess)
-    elif val == 0x02: code = 0xF1 # Right (Guess)
-    elif val == 0x04: code = 0xF2 # Middle (Guess)
-        
-    return build_apply_binding(apply_offset, action_type=BUTTON_TYPE_MOUSE, action_code=code, modifier=val, page=page)
+    if val not in (0x01, 0x02, 0x04, 0x08, 0x10):
+        raise ValueError("mouse mask must be Left, Right, Middle, Back, or Forward")
+    return build_apply_binding(apply_offset, BUTTON_TYPE_MOUSE,
+                               modifier=val, page=page)
 
 
 def build_forward_back(apply_offset: int, forward: bool, page: int = 0x00) -> bytes:
-    payload = bytes(
-        [
-            0x00,
-            page,
-            apply_offset,
-            0x04,
-            0x01,
-            0x10 if forward else 0x08,
-            0x00,
-            0x44 if forward else 0x4C,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ]
-    )
-    return build_report(0x07, payload)
+    return build_mouse_param(apply_offset, 0x10 if forward else 0x08, page)
+
+
+def build_dpi_control(apply_offset: int, function: int,
+                      page: int = 0x00) -> bytes:
+    if function not in (1, 2, 3):
+        raise ValueError("DPI function must be 1=loop, 2=up, or 3=down")
+    return build_apply_binding(apply_offset, BUTTON_TYPE_DPI_LEGACY,
+                               modifier=function, page=page)
 
 
 def build_special_binding(apply_offset: int, delay_ms: int, repeat_count: int, page: int = 0x00) -> bytes:
@@ -804,7 +741,8 @@ def build_special_binding(apply_offset: int, delay_ms: int, repeat_count: int, p
         apply_offset: Button's mouse region offset (e.g., 0x6C for button 4)
         delay_ms: Delay between repeats in milliseconds (0-255)
         repeat_count: Number of repeats (0-255)
-        page: Memory page (0x00 for Profile 1, 0x40 for Profile 2, etc.)
+        page: High byte of the destination address. Areson Venus Pro devices
+            have only one exposed profile, whose action table is on page 0.
     
     Format from Windows capture:
     - Type = 0x04, D1 = delay_ms, D2 = repeat_count
@@ -815,25 +753,8 @@ def build_special_binding(apply_offset: int, delay_ms: int, repeat_count: int, p
     d2 = repeat_count & 0xFF
     d3 = (0x55 - (btype + d1 + d2)) & 0xFF
     
-    payload = bytes(
-        [
-            0x00,
-            page,
-            apply_offset,
-            0x04,  # Length
-            btype,
-            d1,
-            d2,
-            d3,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ]
-    )
-    return build_report(0x07, payload)
+    return build_memory_write(((page & 0xFF) << 8) | apply_offset,
+                              bytes((btype, d1, d2, d3)))
 
 
 def build_poll_rate_toggle(apply_offset: int, page: int = 0x00) -> bytes:
@@ -842,25 +763,8 @@ def build_poll_rate_toggle(apply_offset: int, page: int = 0x00) -> bytes:
     d1, d2 = 0x00, 0x00
     d3 = (0x55 - (btype + d1 + d2)) & 0xFF  # = 0x4E
     
-    payload = bytes(
-        [
-            0x00,
-            page,
-            apply_offset,
-            0x04,
-            btype,
-            d1,
-            d2,
-            d3,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ]
-    )
-    return build_report(0x07, payload)
+    return build_memory_write(((page & 0xFF) << 8) | apply_offset,
+                              bytes((btype, d1, d2, d3)))
 
 
 def build_rgb_toggle(apply_offset: int, page: int = 0x00) -> bytes:
@@ -869,48 +773,14 @@ def build_rgb_toggle(apply_offset: int, page: int = 0x00) -> bytes:
     d1, d2 = 0x00, 0x00
     d3 = (0x55 - (btype + d1 + d2)) & 0xFF  # = 0x4D
     
-    payload = bytes(
-        [
-            0x00,
-            page,
-            apply_offset,
-            0x04,
-            btype,
-            d1,
-            d2,
-            d3,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ]
-    )
-    return build_report(0x07, payload)
+    return build_memory_write(((page & 0xFF) << 8) | apply_offset,
+                              bytes((btype, d1, d2, d3)))
 
 
 def build_disabled(apply_offset: int, page: int = 0x00) -> bytes:
     """Build a disabled binding for a button."""
-    payload = bytes(
-        [
-            0x00,
-            page,
-            apply_offset,
-            0x04,
-            BUTTON_TYPE_DISABLED,  # 0x00
-            0x00,
-            0x00,
-            0x55,  # Validation byte
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ]
-    )
-    return build_report(0x07, payload)
+    return build_memory_write(((page & 0xFF) << 8) | apply_offset,
+                              bytes((BUTTON_TYPE_DISABLED, 0, 0, 0x55)))
 
 
 @dataclass(frozen=True)
@@ -919,6 +789,13 @@ class MacroEvent:
     is_down: bool
     delay_ms: int
     is_modifier: bool = False  # Modifiers use different status codes
+    event_type: str = "keyboard"  # keyboard, modifier, or mouse
+
+    @classmethod
+    def mouse(cls, button_mask: int, is_down: bool, delay_ms: int) -> "MacroEvent":
+        if button_mask not in (0x01, 0x02, 0x04, 0x08, 0x10):
+            raise ValueError("unsupported macro mouse-button mask")
+        return cls(button_mask, is_down, delay_ms, False, "mouse")
 
     def to_bytes(self) -> bytes:
         """Convert to the 5-byte format expected by the mouse hardware.
@@ -927,53 +804,70 @@ class MacroEvent:
         Status codes:
         - 0x81 = Key Down, 0x41 = Key Up (regular keys)
         - 0x80 = Modifier Down, 0x40 = Modifier Up (Shift, Ctrl, Alt)
+        - 0x84 = Mouse Down, 0x44 = Mouse Up
+
+        The vendor converter accepts event classes 0, 1, and 4 only.  Relative
+        mouse movement is therefore not representable in this format.
         """
-        if self.is_modifier:
+        if not 0 <= self.delay_ms <= 0xFFFF:
+            raise ValueError("macro delay must be 0..65535 ms")
+        event_type = "modifier" if self.is_modifier else self.event_type
+        if event_type == "mouse":
+            if self.keycode not in (0x01, 0x02, 0x04, 0x08, 0x10):
+                raise ValueError("invalid mouse-button mask")
+            status = 0x84 if self.is_down else 0x44
+        elif event_type == "modifier":
             status = 0x80 if self.is_down else 0x40
-        else:
+        elif event_type == "keyboard":
             status = 0x81 if self.is_down else 0x41
+        else:
+            raise ValueError(f"unsupported macro event type: {event_type}")
         return bytes([status, self.keycode, 0x00, (self.delay_ms >> 8) & 0xFF, self.delay_ms & 0xFF])
 
 
+def build_macro_image(name: str, events: Iterable[MacroEvent]) -> bytes:
+    """Serialize one complete, unpadded 0x180-byte-slot macro image.
+
+    EEPROM writes may contain fewer than ten data bytes, so padding the final
+    chunk is unnecessary.  In particular, padding a 69-event image would grow
+    it from 381 to 390 bytes and corrupt the following slot.
+    """
+    event_list = tuple(events)
+    if len(event_list) > MACRO_MAX_EVENTS:
+        raise ValueError(
+            f"a macro slot holds at most {MACRO_MAX_EVENTS} events")
+
+    encoded_name = bytearray()
+    for character in name:
+        encoded_character = character.encode("utf-16-le")
+        if len(encoded_name) + len(encoded_character) > 30:
+            break
+        encoded_name.extend(encoded_character)
+    name_bytes = bytes(encoded_name)
+    header = (
+        bytes((len(name_bytes),))
+        + name_bytes.ljust(30, b"\x00")
+        + bytes((len(event_list),))
+    )
+    event_bytes = b"".join(event.to_bytes() for event in event_list)
+    checksum = calculate_terminator_checksum(header + event_bytes,
+                                             len(event_list))
+    image = header + event_bytes + bytes((checksum, 0, 0, 0))
+    if len(image) > MACRO_SLOT_SIZE:
+        raise ValueError("serialized macro exceeds its EEPROM slot")
+    return image
+
+
 def build_macro_chunk(offset: int, chunk: bytes, macro_page: int = 0x03) -> bytes:
-    """Build a macro data chunk packet.
+    """Build one write into the absolute macro storage region.
     
     Args:
         offset: Byte offset within the macro data region
         chunk: The data bytes to write (max 10 bytes)
-        macro_page: Memory page for macro storage. 
-                   From captures: button 1 uses 0x03, button 11 uses 0x18
+        macro_page: High byte of the absolute macro address. Slots have a
+            stride of ``0x180``, so odd slots begin at offset ``0x80``.
     """
-    if len(chunk) > 10:
-        raise ValueError("macro chunk must be <= 10 bytes")
-    chunk_len = len(chunk)
-    padded = chunk.ljust(10, b"\x00")
-    payload = bytes([0x00, macro_page & 0xFF, offset & 0xFF, chunk_len & 0xFF, *padded])
-    return build_report(0x07, payload)
-
-
-def build_flash_write(page: int, offset: int, data: bytes) -> bytes:
-    """Write data to flash memory.
-    
-    This is a generic wrapper around the same packet structure used for macros.
-    Max 10 bytes per packet.
-    """
-    return build_macro_chunk(offset, data, page)
-
-
-
-def get_macro_page(apply_offset: int) -> int:
-    """Calculate the macro memory page for a button.
-    
-    With contiguous button offsets (0x60-0x9C), the flash_index is simply:
-    flash_index = (apply_offset - 0x60) // 4
-    
-    Macros are stored starting at page 0x03, with each button getting dedicated pages.
-    From memory dumps, macros appear in slots starting at page 0x03.
-    """
-    flash_index = (apply_offset - 0x60) // 4
-    # Simple linear mapping: button 0 -> page 0x03, button 1 -> page 0x04, etc.
-    return 0x03 + flash_index
+    return build_memory_write(((macro_page & 0xFF) << 8) | (offset & 0xFF), chunk)
 
 
 def build_macro_terminator(offset: int, checksum: int, macro_page: int = 0x03) -> bytes:
@@ -984,7 +878,7 @@ def build_macro_terminator(offset: int, checksum: int, macro_page: int = 0x03) -
 
     Args:
         offset: Byte offset where terminator should be written (after last event)
-        checksum: Calculated checksum using formula: (~sum(data) - count + (index+1)^2) & 0xFF
+        checksum: ``(0x55 - event_count - sum(event_bytes)) & 0xff``.
         macro_page: Memory page for macro storage
     """
     tail = bytes([checksum, 0x00, 0x00, 0x00])
@@ -1000,10 +894,12 @@ def build_macro_bind(apply_offset: int, index: int, repeat: int = 0x01, page: in
     - D2 = repeat count (1-253) or mode (0xFE=Hold, 0xFF=Toggle)
     - Chk = 0x55 - sum(bytes 0-2)
     """
-    btype = 0x06
-    chk = (0x55 - (btype + index + repeat)) & 0xFF
-    data = bytes([btype, index, repeat, chk, 0x00, 0x00, 0x00, 0x00])
-    return build_flash_write(0x00, apply_offset, data)
+    if not 0 <= index <= 0x0F:
+        raise ValueError("macro index must be 0..15")
+    if not 1 <= repeat <= 0xFF:
+        raise ValueError("macro repeat must be 1..255")
+    return build_apply_binding(apply_offset, BUTTON_TYPE_MACRO,
+                               action_index=repeat, modifier=index, page=page)
 
 
 def get_macro_slot_info(macro_index: int) -> tuple[int, int]:
@@ -1012,6 +908,8 @@ def get_macro_slot_info(macro_index: int) -> tuple[int, int]:
     Each slot is 384 bytes (0x180).
     Base Address for Macro 0 (Index 0) is Page 0x03, Offset 0x00 (0x300).
     """
+    if not 0 <= macro_index <= 15:
+        raise ValueError("macro index must be 0..15")
     base_addr = 0x300
     stride = 0x180
     
@@ -1023,254 +921,355 @@ def get_macro_slot_info(macro_index: int) -> tuple[int, int]:
 
 
 def build_dpi(slot_index: int, value: int, tweak: int) -> bytes:
-    if not 0 <= slot_index <= 4:
-        raise ValueError("slot_index must be 0..4")
+    if not 0 <= slot_index <= 7:
+        raise ValueError("slot_index must be 0..7")
     offset = 0x0C + (slot_index * 4)
-    payload = bytes(
-        [
-            0x00,
-            0x00,
-            offset & 0xFF,
-            0x04,
-            value & 0xFF,
-            value & 0xFF,
-            0x00,
-            tweak & 0xFF,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-            0x00,
-        ]
-    )
-    return build_report(0x07, payload)
+    return build_memory_write(offset, bytes((value & 0xFF, value & 0xFF,
+                                             0x00, tweak & 0xFF)))
 
 
 @dataclass(frozen=True)
 class DeviceInfo:
-    path: str
+    path: bytes | str
     product: str
     manufacturer: str
     vendor_id: int
     product_id: int
     serial: str
-    interface_number: int = 0  # Added to track interface
+    interface_number: int = -1
+    usage_page: int = 0
+    usage: int = 0
+    access_error: str = ""
+    selection_note: str = ""
+
+    @property
+    def display_path(self) -> str:
+        if isinstance(self.path, bytes):
+            return self.path.decode(errors="backslashreplace")
+        return self.path
 
 
-def _device_sort_key(info: DeviceInfo) -> tuple[int, int, str]:
+@dataclass(frozen=True)
+class BatteryStatus:
+    level: int
+    percent: int
+    cable_connected: bool
+    raw: bytes
+
+
+class DeviceAccessError(RuntimeError):
+    pass
+
+
+class ProtocolError(RuntimeError):
+    pass
+
+
+class ProtocolTimeout(ProtocolError):
+    pass
+
+
+def expected_interface(vendor_id: int, product_id: int) -> int:
+    return 2 if (vendor_id, product_id) == (0x04D9, 0xFC55) else 1
+
+
+def expected_usage_page(vendor_id: int, product_id: int) -> int:
+    return 0xFFA0 if (vendor_id, product_id) == (0x04D9, 0xFC55) else 0xFF02
+
+
+def _format_open_error(path: bytes | str, exc: BaseException) -> str:
+    shown = path.decode(errors="backslashreplace") if isinstance(path, bytes) else str(path)
+    detail = str(exc).strip() or exc.__class__.__name__
+    lowered = detail.lower()
+    if "permission" in lowered or "access denied" in lowered:
+        return (f"Permission denied opening {shown}. Install 99-venus-pro.rules, "
+                "reload udev rules, then unplug and reconnect the mouse/receiver.")
+    return (f"Cannot open config interface {shown}: {detail}. Check the udev ACL "
+            "and close Wine, virtual machines, or capture tools that may have claimed it.")
+
+
+def _probe_open(path: bytes | str) -> str:
+    if not HIDAPI_AVAILABLE:
+        return "python-hidapi is not installed"
+    handle = None
+    try:
+        handle = hid.device()
+        raw_path = path.encode() if isinstance(path, str) else path
+        handle.open_path(raw_path)
+        return ""
+    except Exception as exc:
+        return _format_open_error(path, exc)
+    finally:
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                pass
+
+
+def _device_sort_key(info: DeviceInfo) -> tuple[int, int, int, str]:
     product_lower = info.product.lower()
     # Check string OR explicit PID for receiver
     is_receiver = "receiver" in product_lower or info.product_id == 0xFA07
 
-    # Holtek devices (VID 0x04D9) use interface 2 for config
-    is_holtek = info.vendor_id == 0x04D9
-
-    if is_holtek:
-        if info.interface_number == 2:
-            interface_rank = 0
-        else:
-            interface_rank = 2
-    else:
-        if info.interface_number == 1:
-            interface_rank = 0
-        elif info.interface_number == 0:
-            interface_rank = 1
-        else:
-            interface_rank = 2
-    return (1 if is_receiver else 0, interface_rank, info.product)
+    wanted = expected_interface(info.vendor_id, info.product_id)
+    interface_rank = 0 if info.interface_number == wanted else 1
+    access_rank = 1 if info.access_error else 0
+    return (access_rank, 1 if is_receiver else 0, interface_rank, info.product)
 
 
 def list_devices(exclude_receivers: bool = False) -> list[DeviceInfo]:
-    devices = []
-    found = []
-    found_by_enum = set()  # Track (vid, pid) combos found via enumeration
+    """Enumerate only usable vendor configuration interfaces.
 
-    # Try enumeration first to get full details (path, interface number)
-    try:
-        for vid in VENDOR_IDS:
-            devs = hid.enumerate(vid, 0)
-            for d in devs:
-                if d['product_id'] in PRODUCT_IDS:
-                    found.append(d)
-                    found_by_enum.add((d['vendor_id'], d['product_id']))
-    except:
-        pass
+    A HID device exposes separate mouse, keyboard, and vendor interfaces.  The
+    old fallback opened by VID/PID and then fabricated an unusable path, which
+    is the direct cause of many ``open failed`` reports.  Linux hidapi always
+    supplies a real hidraw path, so entries without one are never returned.
+    """
+    if not HIDAPI_AVAILABLE:
+        return []
 
-    # Fallback: try direct open for VID/PIDs not found by enumeration.
-    # This is necessary for some systems (e.g., macOS) where hid.enumerate()
-    # might not return all necessary details or might fail for certain devices.
-    for vid in VENDOR_IDS:
-        for pid in PRODUCT_IDS:
-            if (vid, pid) in found_by_enum:
+    devices: list[DeviceInfo] = []
+    for vid, pid in sorted(SUPPORTED_DEVICE_IDS):
+        try:
+            entries = list(hid.enumerate(vid, pid))
+        except Exception:
+            continue
+        if not entries:
+            continue
+
+        wanted_interface = expected_interface(vid, pid)
+        wanted_page = expected_usage_page(vid, pid)
+        exact = [entry for entry in entries
+                 if entry.get("interface_number", -1) == wanted_interface]
+        usage_matches = [entry for entry in entries
+                         if entry.get("usage_page", 0) == wanted_page]
+        unknown_interface = [entry for entry in entries
+                             if entry.get("interface_number", -1) < 0]
+        unknown_paths = {entry.get("path") for entry in unknown_interface
+                         if entry.get("path")}
+
+        if exact:
+            exact_vendor_usage = [entry for entry in exact
+                                  if entry.get("usage_page", 0) == wanted_page]
+            candidates = exact_vendor_usage or exact
+            note = ""
+        elif usage_matches:
+            candidates = usage_matches
+            note = "Selected by vendor usage page; interface number was unavailable."
+        elif len(unknown_paths) == 1:
+            candidates = unknown_interface
+            note = "Interface metadata unavailable; selected the only HID candidate."
+        else:
+            # Do not open the boot mouse/keyboard interfaces and pretend they
+            # are configuration paths.
+            continue
+
+        seen_paths: set[bytes | str] = set()
+        for item in candidates:
+            path = item.get("path")
+            if not path or path in seen_paths:
                 continue
-            try:
-                h = hid.device()
-                h.open(vid, pid)
-                found.append({
-                    'vendor_id': vid,
-                    'product_id': pid,
-                    'path': b"Unknown (hidapi open)",
-                    'interface_number': -1
-                })
-                h.close()
-            except IOError:
+            seen_paths.add(path)
+            product = item.get("product_string") or DEVICE_NAMES.get((vid, pid), "Unknown")
+            if exclude_receivers and (pid == 0xFA07 or "receiver" in product.lower()):
                 continue
-            except Exception:
-                continue
-
-    seen_paths = set()
-    for item in found:
-        if item["product_id"] not in PRODUCT_IDS:
-            continue
-
-        product = item.get("product_string") or "Unknown"
-
-        # Filter out "Wireless Receiver" only when explicitly requested.
-        if exclude_receivers and "receiver" in product.lower():
-            continue
-
-        # Accept interfaces 0, 1, 2 (generic HID config interface on Holtek variants)
-        # and -1 for fallback direct-open entries
-        interface = item.get("interface_number", -1)
-        if interface not in [-1, 0, 1, 2]:
-            continue
-        
-        path_str = item["path"].decode() if isinstance(item["path"], bytes) else item["path"]
-            
-        if path_str in seen_paths:
-            continue
-        seen_paths.add(path_str)
-
-        devices.append(
-            DeviceInfo(
-                path=path_str,
+            devices.append(DeviceInfo(
+                path=path,
                 product=product,
                 manufacturer=item.get("manufacturer_string") or "Unknown",
-                vendor_id=item["vendor_id"],
-                product_id=item["product_id"],
+                vendor_id=vid,
+                product_id=pid,
                 serial=item.get("serial_number") or "",
-                interface_number=interface,
-            )
-        )
-        
-    # Sort devices: non-receiver first, then preferred interface (1 before 0).
+                interface_number=item.get("interface_number", -1),
+                usage_page=item.get("usage_page", 0),
+                usage=item.get("usage", 0),
+                access_error=_probe_open(path),
+                selection_note=note,
+            ))
+
     devices.sort(key=_device_sort_key)
-    
     return devices
 
 
 class VenusDevice:
-    def __init__(self, path: str):
+    # Interrupt responses are consumed from one hidraw queue. Serializing
+    # handles prevents the tray poller from stealing a configuration ACK.
+    _io_lock = threading.Lock()
+
+    def __init__(self, path: bytes | str):
         self._path = path
-        self._dev: Optional[hid.device] = None
+        self._dev = None
+        self._lock_held = False
+        self.last_error = ""
 
     def open(self) -> None:
         if self._dev is not None:
             return
-        dev = hid.device()
-        dev.open_path(self._path.encode() if isinstance(self._path, str) else self._path)
-        dev.set_nonblocking(True)
-        self._dev = dev
+        if not HIDAPI_AVAILABLE:
+            raise DeviceAccessError("python-hidapi is not installed")
+        if not self._io_lock.acquire(timeout=1.0):
+            raise DeviceAccessError("mouse configuration interface is busy")
+        self._lock_held = True
+        dev = None
+        try:
+            dev = hid.device()
+            dev.open_path(self._path.encode() if isinstance(self._path, str) else self._path)
+            dev.set_nonblocking(True)
+            self._dev = dev
+        except Exception as exc:
+            try:
+                if dev is not None:
+                    dev.close()
+            except Exception:
+                pass
+            self._io_lock.release()
+            self._lock_held = False
+            raise DeviceAccessError(_format_open_error(self._path, exc)) from exc
 
     def close(self) -> None:
         if self._dev is None:
             return
-        self._dev.close()
-        self._dev = None
+        try:
+            self._dev.close()
+        finally:
+            self._dev = None
+            if self._lock_held:
+                self._io_lock.release()
+                self._lock_held = False
 
     def send(self, report: bytes) -> None:
         if self._dev is None:
             raise RuntimeError("device not open")
         if len(report) != REPORT_LEN:
             raise ValueError(f"report must be {REPORT_LEN} bytes")
-        self._dev.send_feature_report(report)
+        if report[0] != REPORT_ID or not report_checksum_valid(report):
+            raise ValueError("invalid Areson feature report")
+        written = self._dev.send_feature_report(report)
+        if written is not None and written <= 0:
+            raise ProtocolError("hidapi rejected the feature report")
 
-    def send_reliable(self, report: bytes, timeout_ms: int = 500) -> bool:
-        """Sends a Feature Report (0x08) and waits for acknowledgment (0x09)."""
-        self.send(report)
-        
-        cmd = report[1]
-        # For bulk writes (Cmd 07), we also want to match Page and Offset if possible
-        page = report[3]
-        off = report[4]
-        
-        start = time.time()
-        while (time.time() - start) * 1000 < timeout_ms:
-            resp = self._dev.read(64, timeout_ms=50)
-            if resp and resp[0] == 0x09 and resp[1] == cmd:
-                # If it's a memory write, verify page/offset too
-                if cmd == 0x07:
-                    if resp[3] == page and resp[4] == off:
-                        return True
-                else:
-                    return True
-        return False
-
-    def unlock(self) -> bool:
-        """Sends the Magic Unlock sequence (Cmd 09, 4D, 01) reliably."""
-        if self._dev is None:
-            return False
-            
-        try:
-            # 1. Reset (Cmd 09)
-            self.send_reliable(build_simple(0x09))
-            
-            # 2. Magic Packet 1 (Cmd 4D)
-            magic1 = bytes([0x08, 0x4D, 0x05, 0x50, 0x00, 0x55, 0x00, 0x55, 0x00, 0x55, 0x91])
-            self.send_reliable(magic1.ljust(17, b'\x00'))
-            
-            # 3. Magic Packet 2 (Cmd 01)
-            magic2 = bytes([0x08, 0x01, 0x00, 0x00, 0x00, 0x04, 0x56, 0x57, 0x3d, 0x1b, 0x00, 0x00])
-            self.send_reliable(magic2.ljust(17, b'\x00'))
-            
-            return True
-        except Exception as e:
-            print(f"Unlock failed: {e}")
-            return False
-
-    def read_flash(self, page: int, offset: int, length: int) -> bytes:
-        """Read 8 bytes from flash memory at the given page and offset.
-        
-        Note: Currently fixed to 8 bytes per read to ensure reliability.
-        """
+    def _read(self, length: int, timeout_ms: int) -> bytes:
         if self._dev is None:
             raise RuntimeError("device not open")
-        
-        # Flush any pending reports
-        while True:
-            r = self._dev.read(128, timeout_ms=10)
-            if not r:
-                break
-        
+        try:
+            value = self._dev.read(length, timeout_ms)
+        except TypeError:
+            value = self._dev.read(length, timeout_ms=timeout_ms)
+        return bytes(value or ())
+
+    def flush_input(self) -> None:
+        if self._dev is None:
+            return
+        while self._read(64, 1):
+            pass
+
+    def exchange(self, report: bytes, timeout_ms: int = 500) -> bytes:
+        """Send report 0x08 and return its matching interrupt response 0x09."""
+        self.flush_input()
+        self.send(report)
+        command = report[1]
+        address = report[3:5]
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        invalid_checksum_seen = False
+        while time.monotonic() < deadline:
+            remaining = max(1, int((deadline - time.monotonic()) * 1000))
+            response = self._read(64, min(50, remaining))
+            if not response:
+                continue
+            if len(response) < REPORT_LEN:
+                continue
+            response = response[:REPORT_LEN]
+            if response[0] != RESPONSE_REPORT_ID or response[1] != command:
+                continue
+            if command in (CMD_WRITE, CMD_READ) and response[3:5] != address:
+                continue
+            if not report_checksum_valid(response):
+                invalid_checksum_seen = True
+                continue
+            return response
+        suffix = " (a response had a bad checksum)" if invalid_checksum_seen else ""
+        raise ProtocolTimeout(f"command 0x{command:02x} timed out{suffix}")
+
+    def send_reliable(self, report: bytes, timeout_ms: int = 500) -> bool:
+        """Compatibility boolean wrapper around :meth:`exchange`."""
+        try:
+            self.exchange(report, timeout_ms)
+            self.last_error = ""
+            return True
+        except Exception as exc:
+            self.last_error = str(exc)
+            return False
+
+    def ready(self) -> bool:
+        response = self.exchange(build_simple(CMD_READY))
+        return response[5] >= 1 and response[6] == 1
+
+    def authenticate(self, challenge: bytes | None = None) -> bool:
+        if challenge is None:
+            challenge = bytes(secrets.randbelow(100) + 1 for _ in range(4))
+        response = self.exchange(build_challenge(challenge))
+        return response[5] == 4 and response[6:10] == challenge_response(challenge)
+
+    def enable_notifications(self) -> bool:
+        response = self.exchange(build_notify_enable())
+        return response[5] == 1 and response[6] == 1
+
+    def start_session(self) -> bool:
+        """Run the non-destructive startup sequence used by the Windows app."""
+        if not self.ready() or not self.authenticate():
+            return False
+        self.read_flash(0x00, 0x04, 2)
+        return self.enable_notifications()
+
+    def begin_write(self) -> bool:
+        """Request ready state before one or more immediately-persistent writes."""
+        return self.ready()
+
+    def unlock(self) -> bool:
+        """Deprecated safe alias for :meth:`start_session`."""
+        try:
+            return self.start_session()
+        except Exception as exc:
+            self.last_error = str(exc)
+            return False
+
+    def query_status(self) -> BatteryStatus:
+        """Read battery level (0..10) and cable/power-source flag."""
+        response = self.exchange(build_simple(CMD_STATUS))
+        if response[5] < 2:
+            raise ProtocolError("status response is shorter than two bytes")
+        level = response[6]
+        if level > 10:
+            raise ProtocolError(f"invalid battery step {level}; expected 0..10")
+        percent = level * 10
+        return BatteryStatus(level, percent, bool(response[7]), response[6:8])
+
+    def factory_reset(self) -> None:
+        """Erase settings and macros.  Call only after explicit confirmation."""
+        self.exchange(build_simple(CMD_FACTORY_RESET), timeout_ms=1000)
+
+    def read_flash(self, page: int, offset: int, length: int) -> bytes:
+        """Read up to ten bytes from an EEPROM page/offset."""
+        if self._dev is None:
+            raise RuntimeError("device not open")
         req = build_flash_read(page, offset, length)
-        self._dev.send_feature_report(req)
-        
-        # Responses arrive on Interrupt endpoint, Report ID 0x09
-        # Wait up to 100ms for response
-        start_time = time.time()
-        while (time.time() - start_time) < 0.2: # 200ms timeout
-            resp = self._dev.read(128, timeout_ms=50)
-            if resp and resp[0] == 0x09 and resp[1] == 0x08:
-                # Format: 09 08 00 [page] [offset] [len] [data...]
-                # Check consistency
-                if resp[3] == page and resp[4] == offset:
-                    # Successfully read data
-                    data_len = resp[5]
-                    return bytes(resp[6 : 6 + data_len])
-        
-        raise RuntimeError(f"Flash read timeout at Page=0x{page:02X} Offset=0x{offset:02X}")
+        response = self.exchange(req)
+        data_len = response[5]
+        if data_len != length or data_len > MAX_DATA_LEN:
+            raise ProtocolError(
+                f"read at 0x{page:02x}{offset:02x} returned invalid length {data_len}")
+        return response[6:6 + data_len]
 
 
 def calculate_terminator_checksum(
     data: bytes,
     event_count: int | None = None,
 ) -> int:
-    """
-    Calculate the macro terminator checksum.
+    """Calculate the checksum byte that immediately follows macro events.
 
-    Verified from working Windows macros:
-      checksum = (~sum(events) - event_count + 0x56) & 0xFF
+    The equivalent compact formula is
+    ``(0x55 - event_count - sum(events)) & 0xff``.
     """
     if event_count is None:
         event_count = data[0x1F] if len(data) > 0x1F else 0
@@ -1282,20 +1281,4 @@ def calculate_terminator_checksum(
     else:
         events = data[events_start:events_end]
 
-    s_sum = sum(events) & 0xFF
-    inv_sum = (~s_sum) & 0xFF
-    return (inv_sum - event_count + 0x56) & 0xFF
-
-
-def get_macro_slot_info(index: int) -> tuple[int, int]:
-    """Returns (page, offset) for a given macro index (0-based).
-    Stride is 384 bytes (0x180), NOT 256 bytes.
-    Base Address is 0x300 (Page 3, Offset 0).
-    """
-    base_addr = 0x300
-    stride = 0x180
-    abs_addr = base_addr + (index * stride)
-    
-    page = (abs_addr >> 8) & 0xFF
-    offset = abs_addr & 0xFF
-    return page, offset
+    return (CHECKSUM_BASE - event_count - sum(events)) & 0xFF

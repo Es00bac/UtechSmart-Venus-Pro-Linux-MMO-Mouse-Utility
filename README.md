@@ -17,12 +17,29 @@ It gives Linux users a practical way to manage bindings, macros, DPI profiles, p
 yay -S venusprolinux-git
 ```
 
-### Manual install
+The repository now contains a complete VCS `PKGBUILD`; it uses Arch's
+`python-pyqt6` and `python-hidapi` packages and does not build Python packages
+with pip.
+
+### Arch Linux (manual)
+
+Install the Python packages with pacman first. `cython` is included here for
+people who also experiment with the PyPI hidapi build; the packaged runtime
+does not otherwise need a compiler.
+
+```bash
+sudo pacman -S --needed cython python-pyqt6 python-hidapi
+git clone https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility.git
+cd UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
+./install.sh
+```
+
+### Other distributions (manual)
 
 ```bash
 git clone https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility.git
 cd UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
-pip install cython hidapi PyQt6
+python3 -m pip install --user hidapi PyQt6
 ./install.sh
 ```
 
@@ -59,6 +76,10 @@ If your device reports a different ID, verify support before assuming compatibil
 - **Button Remapping:** Configure all 16 buttons, including the 12-button side panel.
 - **Modifier Support:** Bind buttons to combinations such as `Ctrl+Shift+1` and `Alt+F1`.
 - **Macro Engine:** Visual macro editor to record and edit events with precise timing.
+- **Mouse Macro Events:** Add native left, right, and middle press/release events.
+- **Battery Tray Icon:** Shows battery level and cable state through Qt's desktop tray API.
+- **Battery-color Mouse LED:** Optional minimum-brightness green → yellow →
+  orange → red gauge, controlled by the app while it remains in the tray.
 - **RGB Lighting:** Full control over LED color, brightness, and effects such as Steady, Breathing, Neon, and Off.
 - **DPI Profiles:** Configure up to 5 DPI presets with customizable levels.
 - **Polling Rate:** Adjust USB polling rate between 125Hz and 1000Hz.
@@ -111,32 +132,70 @@ Diagnostic and recovery tools, including factory reset and debug logging for raw
 ## Requirements
 
 - **Python 3.8+**
-- **Cython**
 - **hidapi**
 - **PyQt6**
 
 Optional dependencies:
 
-- **python-evdev** — software macro playback
 - **python-pyusb** — advanced device management
 
 ## Installation notes
 
-### Safer non-root access with udev
+### Non-root access with udev
 
-To access the mouse as a regular user, create a udev rule:
+The installer and packages install `packaging/linux/99-venus-pro.rules`. For a
+source checkout, install that same reviewed file and reconnect the device:
 
 ```bash
-sudo tee /etc/udev/rules.d/99-venus-pro.rules >/dev/null <<'RULES'
-SUBSYSTEM=="usb", ATTR{idVendor}=="25a7", ATTR{idProduct}=="fa07", MODE="0660", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTR{idVendor}=="25a7", ATTR{idProduct}=="fa08", MODE="0660", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTR{idVendor}=="04d9", ATTR{idProduct}=="fc55", MODE="0660", TAG+="uaccess"
-RULES
+sudo install -Dm644 packaging/linux/99-venus-pro.rules /etc/udev/rules.d/99-venus-pro.rules
 sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo udevadm trigger --subsystem-match=hidraw
 ```
 
-This is preferable to leaving the device world-writable.
+The rules cover both the `hidraw` node used by hidapi and the USB device node
+used by optional diagnostics. They use desktop-session ACLs (`TAG+="uaccess"`)
+with mode `0660`, rather than leaving the mouse world-writable.
+
+### “Mouse detected, but open failed”
+
+The Areson/Compx models expose multiple HID interfaces. Configuration is on
+interface 1; interface 0 is the boot mouse and cannot accept these feature
+reports. The app now selects the vendor interface explicitly. If it reports an
+access error after installation:
+
+1. Unplug and reconnect the mouse or wireless receiver.
+2. Confirm that `ls -l /dev/hidraw*` shows an ACL (`+`) for your desktop user.
+3. Close the Windows utility, Wine, virtual machines, and USB capture tools
+   that may have claimed the device, then click **Reconnect/Refresh**.
+
+For a read-only interface/access diagnostic (and optional battery query), run:
+
+```bash
+python3 tools/diagnose_device.py
+python3 tools/diagnose_device.py --battery
+```
+
+The wired `25a7:fa08`, wireless receiver `25a7:fa07`, and Holtek `04d9:fc55`
+variants use different interface selection where needed.
+
+### Battery tray compatibility
+
+The tray icon uses Qt `QSystemTrayIcon`, so it works with KDE Plasma, XFCE,
+MATE, and other desktops that expose a StatusNotifier/system tray. GNOME Shell
+normally requires its AppIndicator/KStatusNotifier extension. If the desktop
+does not expose a tray, the main configuration window still works normally.
+
+The RGB tab and tray menu both expose **Battery-color mouse LED**. This mode
+uses the lowest steady-light brightness found in the Windows capture, checks
+the battery once per minute, and writes a new color only when the hardware's
+10% battery step changes. Closing the window keeps it active in the tray;
+quitting the app restores the lighting that was active when the mode was
+enabled. The preference is remembered for the next launch.
+
+This is intentionally a user-session background controller rather than a root
+daemon: it shares the same hidraw/uaccess permissions as the GUI and can own a
+desktop tray icon. On desktops without a tray, the feature continues only
+while the main window remains open.
 
 ## Usage
 
@@ -152,6 +211,9 @@ Typical flow:
 Practical notes:
 
 - **Wired and wireless:** the app uses the wired connection when present and falls back to the wireless receiver when USB is disconnected.
+- **Battery:** command `0x04` reports 0–10 battery steps and whether the cable is connected; it is a status query, not a write commit.
+- **Battery LED:** enable it in the RGB tab or tray menu, then close the window
+  to leave the lightweight controller running in the desktop session.
 - **Factory reset:** the Advanced tab can restore defaults, but it also wipes custom macros.
 - **Read first:** when troubleshooting, start by reading the current device state before staging new writes.
 
@@ -159,7 +221,15 @@ Practical notes:
 
 - This project is based on reverse-engineered device behavior, so unsupported firmware or hardware variants may diverge.
 - The repo is focused on the Venus Pro family rather than generic MMO mouse support.
-- Some advanced macro or lighting behaviors may need protocol-level investigation before they can be expanded safely.
+- The `25a7:fa07/fa08` action table contains the 12 side buttons, fire, and the
+  three primary mouse buttons, but no entries for its physical top DPI buttons;
+  those appear firmware-fixed. The Holtek `04d9:fc55` map does expose DPI Up and
+  DPI Down, so those two buttons can be rebound on that variant.
+- Mouse movement is not accepted by the vendor macro converter. Native macro
+  clicks are supported; relative pointer movement is not currently offered.
+- The Areson lighting command is an EEPROM write rather than a known volatile
+  LED command. Battery LED mode therefore writes only on a reported 10% step
+  change and restores the prior lighting on normal application exit.
 
 ## Development
 
@@ -170,6 +240,21 @@ Useful repo entry points if you want to inspect or extend the protocol work:
 - `venus_protocol.py`: core protocol implementation
 - `staging_manager.py`: change staging system
 - `transaction_controller.py`: HID transaction handling
+
+Run the capture-backed, hardware-safe regression set explicitly:
+
+```bash
+python3 -m unittest \
+  tests.test_areson_protocol_offline tests.test_battery_led_gui \
+  tests.test_protocol tests.test_rgb tests.test_staging \
+  tests.test_atomic_controller tests.test_error_recovery
+```
+
+Do not treat unrestricted test discovery as hardware-safe. Several older
+files under `tests/` and `tools/` are preserved exploratory/replay programs;
+some write EEPROM, replay superseded packet guesses, or issue factory reset.
+The maintained utility, protocol module, decoder, diagnostic, and explicit
+offline suite above are the authoritative paths.
 
 ## Release checklist
 

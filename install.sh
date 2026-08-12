@@ -18,30 +18,19 @@ sudo install -Dm644 icon.png /usr/share/icons/hicolor/512x512/apps/venusprolinux
 # Install desktop entry
 sudo install -Dm644 packaging/linux/venusprolinux.desktop /usr/share/applications/venusprolinux.desktop
 
-# Create launcher script
-cat << 'LAUNCHER' | sudo tee /usr/bin/venusprolinux > /dev/null
-#!/usr/bin/env python3
-import os
-import sys
-os.execv(sys.executable, [sys.executable, "/usr/share/venusprolinux/venus_gui.py"] + sys.argv[1:])
-LAUNCHER
+# Install the same launcher used by distribution packages.
+sudo install -Dm755 packaging/linux/venusprolinux /usr/bin/venusprolinux
 
-sudo chmod 755 /usr/bin/venusprolinux
+# Install metadata used by desktop software centers.
+sudo install -Dm644 com.github.es00bac.venusprolinux.appdata.xml \
+    /usr/share/metainfo/com.github.es00bac.venusprolinux.appdata.xml
 
 # Update icon cache
 sudo gtk-update-icon-cache -f /usr/share/icons/hicolor/ 2>/dev/null || true
 
-# Install udev rules for non-root access (hidraw for hidapi, usb for pyusb magic unlock)
-cat << 'UDEV' | sudo tee /etc/udev/rules.d/99-venus-pro.rules > /dev/null
-# Venus Pro (Wireless Receiver)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", MODE="0666"
-# Venus Pro (Wired)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa08", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa08", MODE="0666"
-# Venus MMO (Holtek variant)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04d9", ATTRS{idProduct}=="fc55", MODE="0666"
-SUBSYSTEM=="usb", ATTRS{idVendor}=="04d9", ATTRS{idProduct}=="fc55", MODE="0666"
-UDEV
-sudo udevadm control --reload-rules && sudo udevadm trigger
+# Install the reviewed udev rules rather than maintaining a second copy here.
+sudo install -Dm644 packaging/linux/99-venus-pro.rules /etc/udev/rules.d/99-venus-pro.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=hidraw
 echo "udev rules installed to /etc/udev/rules.d/99-venus-pro.rules"
+echo "Unplug and reconnect the mouse/receiver so the new ACL is applied."

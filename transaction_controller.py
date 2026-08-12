@@ -1,8 +1,9 @@
 class TransactionController:
-    """
-    Orchestrates the application of staged changes to the device.
-    Ensures atomicity by attempting to send all packets and only committing
-    the stage if successful.
+    """Send staged changes sequentially and update local state on success.
+
+    Areson EEPROM writes persist as soon as each packet is acknowledged, so
+    this is deliberately not described as an atomic transaction: a failure can
+    leave the successfully written prefix on the device.
     """
     def __init__(self, device, packet_builder, logger=None):
         """
@@ -46,9 +47,8 @@ class TransactionController:
 
         self._log(f"TransactionController: Built {len(all_packets)} packets. Sending...")
 
-        # 2. Send packets
-        # In a real atomic setup, we might want to verify state, but 
-        # for HID, reliable send is our best proxy.
+        # 2. Send packets. Each successful ACK may already represent a
+        # persistent EEPROM change.
         for i, pkt in enumerate(all_packets):
             if not self.device.send_reliable(pkt):
                 self._log(f"TransactionController: Send failed at packet {i}/{len(all_packets)} ({pkt.hex()})")
@@ -58,7 +58,7 @@ class TransactionController:
             if i % 5 == 0:
                 self._log(f"TransactionController: Sent packet {i+1}/{len(all_packets)}")
 
-        # 3. Commit state on success
-        self._log("TransactionController: All packets sent. Committing state.")
+        # 3. Update the application's base state only after all ACKs.
+        self._log("TransactionController: All packets acknowledged; updating local state.")
         staging_manager.commit()
         return True

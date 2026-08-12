@@ -14,13 +14,16 @@
     <ul>
       <li>Full button remapping for all 16 buttons</li>
       <li>Macro recording and management</li>
+      <li>Native mouse-button events in hardware macros</li>
+      <li>Battery and cable status in the desktop tray</li>
+      <li>Minimum-brightness battery-color mouse LED mode</li>
       <li>RGB lighting configuration (Neon, Breathing, Steady)</li>
       <li>DPI profile settings (up to 16000 DPI)</li>
       <li>Polling rate adjustment (125Hz - 1000Hz)</li>
       <li>Profile management (save/load configurations)</li>
     </ul>
   </description>
-  <launchable type="desktop-id">com.github.es00bac.venusprolinux.desktop</launchable>
+  <launchable type="desktop-id">venusprolinux.desktop</launchable>
   <screenshots>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/Buttons.png</image>
@@ -37,6 +40,9 @@
   </screenshots>
   <url type="homepage">https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility</url>
   <url type="bugtracker">https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/issues</url>
-  <developer_name>Es00bac</developer_name>
+  <developer id="io.github.es00bac">
+    <name>Es00bac</name>
+  </developer>
+  <content_rating type="oars-1.1" />
   <update_contact>cabewse_at_gmail.com</update_contact>
 </component>

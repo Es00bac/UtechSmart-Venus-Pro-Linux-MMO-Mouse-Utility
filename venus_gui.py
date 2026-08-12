@@ -8,27 +8,11 @@ from copy import deepcopy
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-try:
-    import evdev
-    from evdev import UInput, ecodes as e
-    EVDEV_AVAILABLE = True
-except ImportError:
-    EVDEV_AVAILABLE = False
-
 import venus_protocol as vp
 import holtek_protocol as hp
 import device_driver as dd
 from staging_manager import StagingManager
 from transaction_controller import TransactionController
-
-
-KEY_USAGE = {chr(ord("A") + i): 0x04 + i for i in range(26)}
-
-DEFAULT_MACRO_EVENTS_HEX = (
-    "000e811700005d411700009d810800005d41080000bc811600006d411600009c811700005e41170000"
-    "9c810c00005e410c0000bc811100004e41110000cb810a00005e410a00"
-)
-DEFAULT_MACRO_TAIL_HEX = "000369000000"
 
 
 class KeyCaptureEdit(QtWidgets.QLineEdit):
@@ -147,130 +131,36 @@ class KeyCaptureEdit(QtWidgets.QLineEdit):
             self.keyChanged.emit()
 
 
-class MacroRunner(QtCore.QThread):
-    """
-    Background service that listens for specific trigger keys (F13-F24)
-    from the Venus Mouse and executes associated software macros.
-    """
-    log_signal = QtCore.pyqtSignal(str)
+class BatteryQueryThread(QtCore.QThread):
+    """Run the short status exchange without blocking the Qt event loop."""
 
-    def __init__(self, parent=None):
+    completed = QtCore.pyqtSignal(object, str)
+
+    def __init__(self, path: bytes | str, parent=None):
         super().__init__(parent)
-        self.running = False
-        self.macros = {} # Key Code (int) -> List of Events
-        self.uinput = None
-        self.phys_dev = None
+        self.path = path
 
-    def load_macros(self, macro_map):
-        """
-        macro_map: dict of {TriggerKeyName: MacroEventList}
-        Example: {"F13": [...], "F14": [...]}
-        """
-        self.macros = {}
-        if not EVDEV_AVAILABLE:
-            return
-
-        for key_name, events in macro_map.items():
-            # Resolve key name to Linux Key Code
-            # F13 -> KEY_F13 (183)
-            # We use evdev.ecodes
+    def run(self) -> None:
+        device = vp.VenusDevice(self.path)
+        status = None
+        error = ""
+        try:
+            device.open()
+            status = device.query_status()
+        except Exception as exc:
+            error = str(exc)
+        finally:
             try:
-                # evdev keys are like 'KEY_F13'
-                ecode_name = f"KEY_{key_name.upper()}"
-                code = getattr(e, ecode_name, None)
-                if code:
-                    self.macros[code] = events
+                device.close()
             except Exception:
                 pass
-
-    def run(self):
-        if not EVDEV_AVAILABLE:
-            self.log_signal.emit("MacroRunner: evdev not found. Software macros disabled.")
-            return
-
-        self.running = True
-        
-        # 1. Find Device (UtechSmart)
-        self.log_signal.emit("MacroRunner: Scanning for device...")
-        target_path = None
-        
-        # Simple scan
-        try:
-            devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
-            for dev in devices:
-                if "Venus" in dev.name or "2.4G" in dev.name:
-                    # Check if it has keys?
-                    caps = dev.capabilities()
-                    if e.EV_KEY in caps:
-                        self.log_signal.emit(f"MacroRunner: Found {dev.name} at {dev.path}")
-                        target_path = dev.path
-                        break
-        except Exception as exc:
-            self.log_signal.emit(f"MacroRunner: Scan error {exc}")
-            return
-
-        if not target_path:
-            self.log_signal.emit("MacroRunner: Mouse input device not found.")
-            return
-
-        # 2. Setup UInput (Virtual Keyboard for playback)
-        try:
-            self.phys_dev = evdev.InputDevice(target_path)
-            # Create uinput device with ALL keys capability
-            cap = {
-                e.EV_KEY: list(range(0, 500)), # Enable all keys
-                e.EV_REL: [e.REL_X, e.REL_Y, e.REL_WHEEL],
-                e.EV_ABS: []
-            }
-            self.uinput = UInput(cap, name="Venus Macro Injector")
-            self.log_signal.emit("MacroRunner: Virtual Injector Created.")
-        except Exception as exc:
-             self.log_signal.emit(f"MacroRunner: Setup error {exc}")
-             return
-
-        # 3. Loop
-        self.log_signal.emit("MacroRunner: Listening for Triggers...")
-        try:
-            # Exclusive grab? No, passive listen.
-            for event in self.phys_dev.read_loop():
-                if not self.running:
-                    break
-                
-                if event.type == e.EV_KEY and event.value == 1: # Key Down
-                    if event.code in self.macros:
-                        self.log_signal.emit(f"MacroRunner: Trigger {event.code} detected!")
-                        self.play_macro(self.macros[event.code])
-                        
-        except Exception as exc:
-            self.log_signal.emit(f"MacroRunner: Loop error {exc}")
-        finally:
-            if self.uinput:
-                self.uinput.close()
-
-    def play_macro(self, events):
-        """
-        Replay events using uinput.
-        Events is a list of dicts/objects from the GUI editor.
-        Protocol events are: [Type, Code, Value?]
-        We need to map internal GUI format to Linux Keys.
-        GUI format: (Type=Mouse/Key, Code=HID_USAGE, Value=Down/Up)
-        We need HID_USAGE -> LINUX_KEY_CODE mapping.
-        """
-        # Mapping HID to Linux is painful.
-        # HID 0x04 (A) -> KEY_A (30)
-        # We can implement a small mapper or use evdev's ecodes if names match?
-        # Protocol keys: vp.HID_KEY_USAGE["A"] = 0x04
-        # We'll need a lookup.
-        pass # To be implemented in detail
-    
-    def stop(self):
-        self.running = False
+        self.completed.emit(status, error)
 
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Venus Pro Config v0.2.1 (Reverse Engineering)")
+        self.setWindowTitle("Venus Pro Config")
         self.resize(1200, 780)
         
         # Set Application Icon
@@ -284,20 +174,31 @@ class MainWindow(QtWidgets.QMainWindow):
             app.setDesktopFileName("venusprolinux")
 
         # Store device path instead of keeping device open (prevents blocking mouse input)
-        self.device_path: str | None = None
+        self.device_path: bytes | str | None = None
         self.device_infos: list[vp.DeviceInfo] = []
         self.device_type: str = 'venus_pro'  # 'venus_pro' or 'holtek'
         self.holtek_profile: int = 0  # 0-4, selected hardware profile for Holtek device
         self.active_button_profiles: dict = vp.BUTTON_PROFILES
         self.custom_profiles: dict[str, tuple[int, int, int]] = {}
         self.button_assignments: dict[str, dict] = {} # Stored button settings from device
+        self._battery_thread: BatteryQueryThread | None = None
+        self._quitting = False
+        self._tray_notice_shown = False
+        self._shutdown_restore_done = False
+        self._last_battery_led_level: int | None = None
+        self._last_battery_status: tuple[int, bool] | None = None
+        self._battery_led_restore: dict[str, int] | None = None
+        self.battery_led_enabled = False
+        self._config_errors: list[str] = []
         
         # Load macro names from config EARLY (before UI build)
         self.config_dir = Path.home() / ".config" / "venus_pro_linux"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.macro_config_file = self.config_dir / "macros.json"
+        self.settings_file = self.config_dir / "settings.json"
         self.macro_names: dict[int, str] = {}
         self._load_macro_names()
+        self._load_app_settings()
 
 
         root = QtWidgets.QWidget()
@@ -330,26 +231,26 @@ class MainWindow(QtWidgets.QMainWindow):
         # Let's instantiate controller on demand in _commit_changes for now.
         
         self._initialize_default_assignments()
+        self._setup_tray()
 
-        # Attempt to unlock device (requires root, but try anyway)
-        # This will freeze mouse momentarily
-        # if vp.PYUSB_AVAILABLE:
-        #     self._log("Init: Attempting Startup Unlock (PyUSB)...")
-        #     try:
-        #         vp.unlock_device()
-        #         self._log("Init: Unlock command sent.")
-        #     except Exception as e:
-        #         self._log(f"Init: Unlock failed: {e}")
+        for message in self._config_errors:
+            self._log(message)
+        self._config_errors.clear()
 
         self._log("Init: Refreshing and connecting...")
         
-        self._refresh_and_connect()
+        # The initial read runs before main() shows this window.  It must not
+        # create a modal message box, otherwise opening the parent from the
+        # tray exposes a completely disabled-looking interface.
+        self._refresh_and_connect(silent=True)
         
         # Keyboard shortcuts for Undo/Redo
         undo_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Undo, self)
         undo_shortcut.activated.connect(self._on_undo)
         redo_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Redo, self)
         redo_shortcut.activated.connect(self._on_redo)
+        if app:
+            app.aboutToQuit.connect(self._on_app_quit)
 
 
     def _build_connection_group(self) -> QtWidgets.QGroupBox:
@@ -393,8 +294,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.device_combo = QtWidgets.QComboBox()
         self.device_combo.setVisible(False)
 
-        self.refresh_button.clicked.connect(self._refresh_and_connect)
-        self.read_button.clicked.connect(self._read_settings)
+        self.refresh_button.clicked.connect(
+            lambda _checked=False: self._refresh_and_connect(silent=False))
+        self.read_button.clicked.connect(
+            lambda _checked=False: self._read_settings(silent=False))
         self.export_button.clicked.connect(self._export_profile)
         self.import_button.clicked.connect(self._import_profile)
         
@@ -493,7 +396,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_select = QtWidgets.QComboBox()
         self.action_select.addItems([
             "Keyboard Key", "Left Click", "Right Click", "Middle Click", 
-            "Forward", "Back", "Macro", "Reset Defaults",
+            "Forward", "Back", "Macro",
             "Fire Key", "Triple Click", "Media Key", "RGB Toggle", 
             "Polling Rate Toggle", "DPI Control", "Disabled"
         ])
@@ -542,7 +445,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.macro_group = QtWidgets.QWidget()
         macro_layout = QtWidgets.QFormLayout(self.macro_group)
         self.macro_index_spin = QtWidgets.QSpinBox()
-        self.macro_index_spin.setRange(1, 12)
+        self.macro_index_spin.setRange(1, 16)
         macro_layout.addRow("Macro Index:", self.macro_index_spin)
         
         # Macro Repeat Mode
@@ -831,6 +734,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 if idx_count >= 0: self.macro_repeat_combo.setCurrentIndex(idx_count)
             
             self.macro_repeat_count.setValue(params.get("mode", 1) if isinstance(params.get("mode", 1), int) else 1)
+        elif action == "Media Key":
+            index = self.media_select.findData(params.get("code", 0))
+            if index >= 0:
+                self.media_select.setCurrentIndex(index)
+        elif action == "DPI Control":
+            index = self.dpi_action_select.findData(params.get("func", 1))
+            if index >= 0:
+                self.dpi_action_select.setCurrentIndex(index)
+        elif action in ("Fire Key", "Triple Click"):
+            self.special_delay_spin.setValue(params.get("delay", 40))
+            self.special_repeat_spin.setValue(params.get("repeat", 3))
 
     def _update_bind_ui(self, action: str) -> None:
         """Show/hide UI elements based on selected action."""
@@ -838,6 +752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.macro_group.setVisible(action == "Macro")
         self.special_group.setVisible(action in ["Fire Key", "Triple Click"])
         self.media_group.setVisible(action == "Media Key")
+        self.dpi_group.setVisible(action == "DPI Control")
         
         # Enable/disable repeat count based on repeat mode
         if action == "Macro":
@@ -864,10 +779,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     # Convert keys to int
                     self.macro_names = {int(k): v for k, v in data.items()}
             except Exception as e:
-                self._log(f"Config: Failed to load macro names: {e}")
+                self._config_errors.append(f"Config: Failed to load macro names: {e}")
         
         # Ensure defaults for missing slots
-        for i in range(1, 13):
+        for i in range(1, 17):
             if i not in self.macro_names:
                 self.macro_names[i] = f"Macro {i}"
 
@@ -879,6 +794,45 @@ class MainWindow(QtWidgets.QMainWindow):
                 json.dump(self.macro_names, f, indent=2)
         except Exception as e:
             self._log(f"Config: Failed to save macro names: {e}")
+
+    def _load_app_settings(self) -> None:
+        """Load persistent background-controller preferences."""
+        if not self.settings_file.exists():
+            return
+        try:
+            data = json.loads(self.settings_file.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("settings root must be an object")
+            enabled = bool(data.get("battery_led_enabled", False))
+            restore = data.get("battery_led_restore")
+            parsed_restore = None
+            if isinstance(restore, dict):
+                parsed_restore = {
+                    "r": max(0, min(255, int(restore.get("r", 255)))),
+                    "g": max(0, min(255, int(restore.get("g", 0)))),
+                    "b": max(0, min(255, int(restore.get("b", 255)))),
+                    "mode": max(0, min(3, int(
+                        restore.get("mode", vp.RGB_MODE_STEADY)))),
+                    "brightness": max(0, min(100, int(
+                        restore.get("brightness", 100)))),
+                }
+            self.battery_led_enabled = enabled
+            self._battery_led_restore = parsed_restore
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._config_errors.append(f"Config: Failed to load settings: {exc}")
+
+    def _save_app_settings(self) -> None:
+        """Persist the battery LED preference and its restore lighting."""
+        payload = {
+            "battery_led_enabled": self.battery_led_enabled,
+            "battery_led_restore": self._battery_led_restore,
+        }
+        temporary = self.settings_file.with_suffix(".json.tmp")
+        try:
+            temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(self.settings_file)
+        except OSError as exc:
+            self._log(f"Config: Failed to save settings: {exc}")
 
     def _build_macros_tab(self) -> QtWidgets.QWidget:
         """Build the visual macro editor tab with event list, recording, and preview."""
@@ -968,8 +922,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         add_layout.addWidget(QtWidgets.QLabel("Key:"))
         self.add_key_combo = QtWidgets.QComboBox()
+        self.add_key_combo.addItem("Mouse: Left Button", ("mouse", 0x01))
+        self.add_key_combo.addItem("Mouse: Right Button", ("mouse", 0x02))
+        self.add_key_combo.addItem("Mouse: Middle Button", ("mouse", 0x04))
+        self.add_key_combo.insertSeparator(self.add_key_combo.count())
         for key_name in sorted(vp.HID_KEY_USAGE.keys(), key=lambda x: (len(x) > 1, x)):
-            self.add_key_combo.addItem(key_name, vp.HID_KEY_USAGE[key_name])
+            self.add_key_combo.addItem(key_name, ("keyboard", vp.HID_KEY_USAGE[key_name]))
         add_layout.addWidget(self.add_key_combo)
 
         add_layout.addWidget(QtWidgets.QLabel("Action:"))
@@ -1011,7 +969,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         bind_layout.addWidget(QtWidgets.QLabel("Macro Index:"), 0, 2)
         self.macro_bind_index_spin = QtWidgets.QSpinBox()
-        self.macro_bind_index_spin.setRange(1, 12)
+        self.macro_bind_index_spin.setRange(1, 16)
         self.macro_bind_index_spin.setValue(1)
         bind_layout.addWidget(self.macro_bind_index_spin, 0, 3)
 
@@ -1066,7 +1024,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_macro_list(self) -> None:
         """Refresh the macro list widget."""
         self.macro_list.clear()
-        for i in range(1, 13):
+        for i in range(1, 17):
             name = self.macro_names.get(i, f"Macro {i}")
             item = QtWidgets.QListWidgetItem(f"{i}: {name}")
             item.setData(QtCore.Qt.ItemDataRole.UserRole, i)
@@ -1101,19 +1059,12 @@ class MainWindow(QtWidgets.QMainWindow):
                  QtWidgets.QMessageBox.warning(self, "Duplicate Name", f"Macro name '{name}' is already used by Slot {i}.")
                  return
         
-        # Update Name Dict
-        self.macro_names[index] = name
-        self._save_macro_names()
-        
         # Upload to Device
-        self._upload_macro() # This uses macro_bind_index_spin
-        
-        # Refresh List
-        self._refresh_macro_list()
-        
-        # Clear Staged visual (if any)? 
-        # _upload_macro handles device communication.
-        QtWidgets.QMessageBox.information(self, "Saved", f"Macro '{name}' saved to Slot {index}.")
+        if self._upload_macro():  # Uses macro_bind_index_spin.
+            self.macro_names[index] = name
+            self._save_macro_names()
+            self._refresh_macro_list()
+            self._log(f"Macro '{name}' saved to slot {index}")
 
     def _toggle_recording(self, checked: bool) -> None:
         """Start or stop macro recording."""
@@ -1152,7 +1103,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Map Qt key to HID key name
                 key_name = self._qt_key_to_name(qt_key, key_text)
                 if key_name and key_name in vp.HID_KEY_USAGE:
-                    import time
                     current_time = time.time() * 1000  # ms
                     delay = int(current_time - self._last_key_time) if self._last_key_time > 0 else 0
                     delay = min(delay, 5000)  # Cap at 5 seconds
@@ -1203,7 +1153,10 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         return key_map.get(qt_key)
 
-    def _add_event_to_table(self, key_name: str, is_down: bool, delay: int, is_modifier: bool = False) -> None:
+    def _add_event_to_table(self, key_name: str, is_down: bool, delay: int,
+                            is_modifier: bool = False,
+                            event_type: str = "keyboard",
+                            keycode: int | None = None) -> None:
         """Add an event row to the macro event table."""
         row = self.macro_event_table.rowCount()
         self.macro_event_table.insertRow(row)
@@ -1217,6 +1170,9 @@ class MainWindow(QtWidgets.QMainWindow):
         key_item = QtWidgets.QTableWidgetItem(key_name)
         key_item.setFlags(key_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
         key_item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, is_modifier)  # Store modifier flag
+        key_item.setData(QtCore.Qt.ItemDataRole.UserRole + 2,
+                         "modifier" if is_modifier else event_type)
+        key_item.setData(QtCore.Qt.ItemDataRole.UserRole + 3, keycode)
         self.macro_event_table.setItem(row, 1, key_item)
 
         # Action
@@ -1292,17 +1248,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _get_row_data(self, row: int) -> tuple:
         """Get data from a row."""
-        key = self.macro_event_table.item(row, 1).text()
+        key_item = self.macro_event_table.item(row, 1)
+        key = key_item.text()
+        is_modifier = bool(key_item.data(QtCore.Qt.ItemDataRole.UserRole + 1))
+        event_type = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 2) or "keyboard"
+        keycode = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 3)
         action_item = self.macro_event_table.item(row, 2)
         is_down = action_item.data(QtCore.Qt.ItemDataRole.UserRole)
         delay_widget = self.macro_event_table.cellWidget(row, 3)
         delay = delay_widget.value() if delay_widget else 0
-        return (key, is_down, delay)
+        return (key, is_down, delay, is_modifier, event_type, keycode)
 
     def _set_row_data(self, row: int, data: tuple) -> None:
         """Set data in a row."""
-        key, is_down, delay = data
-        self.macro_event_table.item(row, 1).setText(key)
+        key, is_down, delay, is_modifier, event_type, keycode = data
+        key_item = self.macro_event_table.item(row, 1)
+        key_item.setText(key)
+        key_item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, is_modifier)
+        key_item.setData(QtCore.Qt.ItemDataRole.UserRole + 2, event_type)
+        key_item.setData(QtCore.Qt.ItemDataRole.UserRole + 3, keycode)
         action_item = self.macro_event_table.item(row, 2)
         action_item.setText("Press" if is_down else "Release")
         action_item.setData(QtCore.Qt.ItemDataRole.UserRole, is_down)
@@ -1313,9 +1277,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _add_manual_event(self) -> None:
         """Add an event manually from the add controls."""
         key_name = self.add_key_combo.currentText()
+        event_data = self.add_key_combo.currentData()
+        if not event_data:
+            return
+        event_type, keycode = event_data
         is_down = self.add_action_combo.currentData()
         delay = self.add_delay_spin.value()
-        self._add_event_to_table(key_name, is_down, delay)
+        self._add_event_to_table(key_name, is_down, delay,
+                                 event_type=event_type, keycode=keycode)
 
     def _update_macro_preview(self) -> None:
         """Update the preview label with the macro output."""
@@ -1326,6 +1295,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for row in range(self.macro_event_table.rowCount()):
             key = self.macro_event_table.item(row, 1).text() if self.macro_event_table.item(row, 1) else ""
+            event_type = (self.macro_event_table.item(row, 1).data(
+                QtCore.Qt.ItemDataRole.UserRole + 2) if self.macro_event_table.item(row, 1) else "keyboard")
             action_item = self.macro_event_table.item(row, 2)
             is_down = action_item.data(QtCore.Qt.ItemDataRole.UserRole) if action_item else True
             delay_widget = self.macro_event_table.cellWidget(row, 3)
@@ -1336,7 +1307,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if is_down:
                 pressed_keys.add(key)
                 # Only add to result for single-char keys to show "typed" output
-                if len(key) == 1:
+                if event_type == "mouse":
+                    mouse_label = key[7:] if key.startswith("Mouse: ") else key
+                    result.append(f"[{mouse_label}]")
+                elif len(key) == 1:
                     result.append(key.lower())
             else:
                 pressed_keys.discard(key)
@@ -1358,14 +1332,22 @@ class MainWindow(QtWidgets.QMainWindow):
             key_name = key_item.text()
             is_down = action_item.data(QtCore.Qt.ItemDataRole.UserRole)
             is_modifier = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 1) or False
+            event_type = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 2) or (
+                "modifier" if is_modifier else "keyboard")
+            stored_keycode = key_item.data(QtCore.Qt.ItemDataRole.UserRole + 3)
             delay = delay_widget.value() if delay_widget else 0
-            
-            if key_name in vp.HID_KEY_USAGE:
+
+            if event_type == "mouse" and stored_keycode is not None:
+                events.append(vp.MacroEvent.mouse(int(stored_keycode), is_down, delay))
+            elif key_name in vp.HID_KEY_USAGE or stored_keycode is not None:
+                keycode = (int(stored_keycode) if stored_keycode is not None
+                           else vp.HID_KEY_USAGE[key_name])
                 events.append(vp.MacroEvent(
-                    keycode=vp.HID_KEY_USAGE[key_name],
+                    keycode=keycode,
                     is_down=is_down,
                     delay_ms=delay,
-                    is_modifier=is_modifier
+                    is_modifier=is_modifier,
+                    event_type=event_type,
                 ))
         return events
 
@@ -1434,10 +1416,30 @@ class MainWindow(QtWidgets.QMainWindow):
         apply_custom_button.setStyleSheet("font-weight: bold; padding: 8px; background-color: #444;")
         apply_custom_button.clicked.connect(self._apply_rgb_custom)
 
+        self.battery_led_checkbox = QtWidgets.QCheckBox(
+            "Use mouse LED as a battery gauge while this app is running")
+        self.battery_led_checkbox.setChecked(self.battery_led_enabled)
+        self.battery_led_checkbox.setToolTip(
+            "Uses the lowest captured steady-light brightness and updates only "
+            "when the mouse reports a different 10% battery step. Green is full, "
+            "yellow is half, and red is empty.")
+        self.battery_led_checkbox.toggled.connect(self._set_battery_led_enabled)
+        gradient_label = QtWidgets.QLabel(
+            '<span style="color:#00ff00">● full</span> → '
+            '<span style="color:#80ff00">●</span> → '
+            '<span style="color:#ffff00">● half</span> → '
+            '<span style="color:#ff8000">●</span> → '
+            '<span style="color:#ff0000">● empty</span>')
+
         form_layout.addRow("Color:", self.rgb_color_button)
         form_layout.addRow("Mode:", self.rgb_mode)
         form_layout.addRow("Brightness:", brightness_layout)
         form_layout.addRow("", apply_custom_button)
+        form_layout.addRow("Battery LED:", self.battery_led_checkbox)
+        form_layout.addRow("", gradient_label)
+
+        if self._battery_led_restore:
+            self._apply_rgb_restore_to_widgets(self._battery_led_restore)
         
         layout.addWidget(form_widget)
         layout.addStretch()
@@ -1452,6 +1454,23 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         # Optionally auto-apply?
         # self._apply_rgb_custom()
+
+    def _capture_rgb_restore(self) -> dict[str, int]:
+        return {
+            "r": self.rgb_current_color.red(),
+            "g": self.rgb_current_color.green(),
+            "b": self.rgb_current_color.blue(),
+            "mode": int(self.rgb_mode.currentData() or vp.RGB_MODE_OFF),
+            "brightness": self.rgb_brightness.value(),
+        }
+
+    def _apply_rgb_restore_to_widgets(self, settings: dict[str, int]) -> None:
+        color = QtGui.QColor(settings["r"], settings["g"], settings["b"])
+        self._set_custom_color(color)
+        mode_index = self.rgb_mode.findData(settings["mode"])
+        if mode_index >= 0:
+            self.rgb_mode.setCurrentIndex(mode_index)
+        self.rgb_brightness.setValue(settings["brightness"])
 
 
     def _pick_rgb_color(self) -> None:
@@ -1481,7 +1500,9 @@ class MainWindow(QtWidgets.QMainWindow):
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
 
-        header = QtWidgets.QLabel("DPI slots (presets match factory defaults; custom uses computed values)")
+        header = QtWidgets.QLabel(
+            "DPI slots (presets are captured values; custom conversion is approximate and sensor-dependent)")
+        header.setWordWrap(True)
         layout.addWidget(header)
 
         self.dpi_rows: list[tuple[
@@ -1621,42 +1642,280 @@ class MainWindow(QtWidgets.QMainWindow):
     def _log(self, text: str) -> None:
         self.log_area.appendPlainText(text)
 
+    def _battery_icon(self, percent: int | None, cable_connected: bool = False) -> QtGui.QIcon:
+        pixmap = QtGui.QPixmap(64, 64)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+
+        outline = QtGui.QColor("#e6e6e6")
+        if percent is None:
+            fill = QtGui.QColor("#777777")
+        else:
+            fill = QtGui.QColor(*vp.battery_gradient_rgb(percent))
+
+        pen = QtGui.QPen(outline, 4)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        body = QtCore.QRectF(6, 14, 46, 36)
+        painter.drawRoundedRect(body, 5, 5)
+        painter.fillRect(QtCore.QRectF(53, 24, 6, 16), outline)
+
+        if percent is not None:
+            inner_width = 38 * max(0, min(100, percent)) / 100
+            painter.fillRect(QtCore.QRectF(10, 18, inner_width, 28), fill)
+        else:
+            painter.setPen(outline)
+            font = painter.font()
+            font.setBold(True)
+            font.setPixelSize(25)
+            painter.setFont(font)
+            painter.drawText(body, QtCore.Qt.AlignmentFlag.AlignCenter, "?")
+
+        if cable_connected:
+            painter.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 3))
+            painter.drawLine(32, 10, 25, 30)
+            painter.drawLine(25, 30, 34, 30)
+            painter.drawLine(34, 30, 27, 52)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
+    def _setup_tray(self) -> None:
+        """Create one desktop-neutral Qt status icon and refresh timer."""
+        self.tray_icon: QtWidgets.QSystemTrayIcon | None = None
+        self.battery_timer = QtCore.QTimer(self)
+        self.battery_timer.setInterval(60_000)
+        self.battery_timer.timeout.connect(self._request_battery_refresh)
+        self.battery_timer.start()
+        self.battery_led_tray_action: QtGui.QAction | None = None
+
+        if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            self._log("Tray: This desktop session does not expose a system tray.")
+            self._sync_battery_led_controls()
+            return
+
+        self.tray_icon = QtWidgets.QSystemTrayIcon(self._battery_icon(None), self)
+        self.tray_icon.setToolTip("Venus mouse — battery unavailable")
+        menu = QtWidgets.QMenu(self)
+        show_action = menu.addAction("Show Venus Pro Config")
+        show_action.triggered.connect(self._show_from_tray)
+        refresh_action = menu.addAction("Refresh Battery")
+        refresh_action.triggered.connect(self._request_battery_refresh)
+        self.battery_led_tray_action = menu.addAction(
+            "Battery-color mouse LED (minimum brightness)")
+        self.battery_led_tray_action.setCheckable(True)
+        self.battery_led_tray_action.triggered.connect(
+            self._set_battery_led_enabled)
+        menu.addSeparator()
+        quit_action = menu.addAction("Quit")
+        quit_action.triggered.connect(self._quit_from_tray)
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self._tray_activated)
+        self.tray_icon.show()
+        self._sync_battery_led_controls()
+
+        app = QtWidgets.QApplication.instance()
+        if app:
+            app.setQuitOnLastWindowClosed(False)
+
+    def _sync_battery_led_controls(self) -> None:
+        supported = self.device_type == "venus_pro"
+        if hasattr(self, "battery_led_checkbox"):
+            self.battery_led_checkbox.blockSignals(True)
+            self.battery_led_checkbox.setChecked(self.battery_led_enabled)
+            self.battery_led_checkbox.setEnabled(supported)
+            self.battery_led_checkbox.blockSignals(False)
+        if self.battery_led_tray_action:
+            self.battery_led_tray_action.blockSignals(True)
+            self.battery_led_tray_action.setChecked(self.battery_led_enabled)
+            self.battery_led_tray_action.setEnabled(supported)
+            self.battery_led_tray_action.blockSignals(False)
+
+    def _set_battery_led_enabled(self, enabled: bool,
+                                 restore: bool = True) -> None:
+        """Toggle the background battery-color controller."""
+        enabled = bool(enabled)
+        if enabled and self.device_type != "venus_pro":
+            self._sync_battery_led_controls()
+            return
+        if enabled == self.battery_led_enabled:
+            self._sync_battery_led_controls()
+            return
+
+        was_enabled = self.battery_led_enabled
+        if enabled:
+            self._battery_led_restore = self._capture_rgb_restore()
+            self.battery_led_enabled = True
+            self._last_battery_led_level = None
+            self._log(
+                "Battery LED: enabled (minimum brightness; updates on battery-step changes)")
+        else:
+            self.battery_led_enabled = False
+            self._last_battery_led_level = None
+            self._log("Battery LED: disabled")
+
+        self._save_app_settings()
+        self._sync_battery_led_controls()
+        if enabled:
+            self._request_battery_refresh()
+        elif was_enabled and restore:
+            self._restore_battery_led(quiet=False)
+
+    def _restore_battery_led(self, quiet: bool) -> bool:
+        """Restore lighting captured when battery mode was enabled."""
+        settings = self._battery_led_restore
+        self._last_battery_led_level = None
+        if not settings:
+            return True
+        if hasattr(self, "rgb_mode"):
+            self._apply_rgb_restore_to_widgets(settings)
+        if self.device_type != "venus_pro" or self.device_path is None:
+            return True
+        packet = vp.build_rgb(
+            settings["r"], settings["g"], settings["b"],
+            settings["mode"], settings["brightness"])
+        return self._send_reports(
+            [vp.build_simple(vp.CMD_READY), packet],
+            "Battery LED restore", quiet=quiet)
+
+    def _on_app_quit(self) -> None:
+        if self._shutdown_restore_done:
+            return
+        self._shutdown_restore_done = True
+        self._quitting = True
+        self.battery_timer.stop()
+        if self._battery_thread and self._battery_thread.isRunning():
+            # open() may wait one second for the shared HID lock before the
+            # status exchange uses its own 500 ms timeout.
+            self._battery_thread.wait(2000)
+        if self.battery_led_enabled:
+            self._restore_battery_led(quiet=True)
+        if self.tray_icon:
+            self.tray_icon.hide()
+
+    def _apply_battery_led_status(self, status: vp.BatteryStatus) -> None:
+        if (not self.battery_led_enabled or self._quitting or
+                status.level == self._last_battery_led_level):
+            return
+        r, g, b = vp.battery_gradient_rgb(status.percent)
+        success = self._send_reports(
+            [vp.build_simple(vp.CMD_READY),
+             vp.build_battery_indicator_rgb(status.percent)],
+            f"Battery LED {status.percent}% ({r},{g},{b})",
+            quiet=True)
+        if success:
+            self._last_battery_led_level = status.level
+            self._log(
+                f"Battery LED: {status.percent}% -> RGB({r}, {g}, {b}) at minimum brightness")
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_activated(self, reason) -> None:
+        if reason in (QtWidgets.QSystemTrayIcon.ActivationReason.Trigger,
+                      QtWidgets.QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._show_from_tray()
+
+    def _quit_from_tray(self) -> None:
+        self._quitting = True
+        self.battery_timer.stop()
+        if self.tray_icon:
+            self.tray_icon.hide()
+        app = QtWidgets.QApplication.instance()
+        if app:
+            app.quit()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self.tray_icon and self.tray_icon.isVisible() and not self._quitting:
+            event.ignore()
+            self.hide()
+            if not self._tray_notice_shown:
+                self.tray_icon.showMessage(
+                    "Venus Pro Config",
+                    "Battery monitoring is still running. Use the tray menu to quit.",
+                    QtWidgets.QSystemTrayIcon.MessageIcon.Information,
+                    3500,
+                )
+                self._tray_notice_shown = True
+            return
+        super().closeEvent(event)
+
+    def _request_battery_refresh(self) -> None:
+        if not self.tray_icon and not self.battery_led_enabled:
+            return
+        if self.device_type != "venus_pro" or self.device_path is None:
+            if self.tray_icon:
+                self.tray_icon.setIcon(self._battery_icon(None))
+                self.tray_icon.setToolTip("Venus mouse — battery unavailable")
+            return
+        if self._battery_thread and self._battery_thread.isRunning():
+            return
+        self._battery_thread = BatteryQueryThread(self.device_path, self)
+        self._battery_thread.completed.connect(self._battery_query_finished)
+        self._battery_thread.start()
+
+    def _battery_query_finished(self, status: object, error: str) -> None:
+        thread = self._battery_thread
+        self._battery_thread = None
+        if thread:
+            thread.deleteLater()
+        if isinstance(status, vp.BatteryStatus):
+            connection = "USB cable" if status.cable_connected else "wireless"
+            current = (status.level, status.cable_connected)
+            if current != self._last_battery_status:
+                self._log(f"Battery: {status.percent}% ({connection})")
+                self._last_battery_status = current
+            if self.tray_icon:
+                suffix = "; battery LED on" if self.battery_led_enabled else ""
+                self.tray_icon.setIcon(
+                    self._battery_icon(status.percent, status.cable_connected))
+                self.tray_icon.setToolTip(
+                    f"Venus Pro — {status.percent}% ({connection}{suffix})")
+            self._apply_battery_led_status(status)
+        else:
+            if self.tray_icon:
+                self.tray_icon.setIcon(self._battery_icon(None))
+                self.tray_icon.setToolTip(
+                    "Venus Pro — disconnected or inaccessible")
+            if error:
+                self._log(f"Battery refresh: {error}")
+
     def _refresh_devices(self) -> None:
         self.device_infos = vp.list_devices()
         self.device_combo.clear()
-        
-        # Check for busy/captured devices via PyUSB
-        wired_on_bus = False
-        wireless_on_bus = False
-        if vp.PYUSB_AVAILABLE:
-            import usb.core
-            wired_on_bus = usb.core.find(idVendor=vp.VENDOR_IDS[0], idProduct=vp.PRODUCT_IDS[1]) is not None
-            wireless_on_bus = usb.core.find(idVendor=vp.VENDOR_IDS[0], idProduct=vp.PRODUCT_IDS[0]) is not None
 
-        # Check if wired mouse is missing from hidapi but present on bus
-        wired_found = any(d.product_id == vp.PRODUCT_IDS[1] for d in self.device_infos)
-        
-        if wired_on_bus and not wired_found:
-            self.status_label.setText("Status: Wired Mouse BUSY (Captured by Wine/VM?)")
+        if not vp.HIDAPI_AVAILABLE:
+            self.status_label.setText("Status: python-hidapi is not installed")
             self.status_label.setStyleSheet("color: orange; font-weight: bold;")
-            self._log("Refresh: Wired mouse found on bus but not accessible via HID. Likely captured.")
-        elif not self.device_infos:
-            self.status_label.setText("Status: No device found")
-            self.status_label.setStyleSheet("")
-            self.device_combo.addItem("No Venus Pro devices found")
+            self.device_combo.addItem("Install python-hidapi")
             self.device_path = None
             return
+
+        if not self.device_infos:
+            self.status_label.setText("Status: No device found")
+            self.status_label.setStyleSheet("")
+            self.device_combo.addItem("No supported vendor HID interface found")
+            self.device_path = None
+            return
+
+        for info in self.device_infos:
+            access = " — inaccessible" if info.access_error else ""
+            label = (f"{info.product} (0x{info.vendor_id:04x}:0x{info.product_id:04x}, "
+                     f"interface {info.interface_number}){access}")
+            self.device_combo.addItem(label, info)
+
+        chosen = next((item for item in self.device_infos if not item.access_error),
+                      self.device_infos[0])
+        self.device_path = chosen.path
+        if chosen.access_error:
+            self.status_label.setText("Status: Mouse detected, but access failed")
+            self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+            self._log(f"Detection: {chosen.access_error}")
         else:
             self.status_label.setStyleSheet("")
             self.status_label.setText("Status: Ready")
-
-        for info in self.device_infos:
-            label = f"{info.product} (0x{info.product_id:04x}) {info.serial}".strip()
-            self.device_combo.addItem(label, info)
-        
-        if self.device_infos:
-            # Store path of first device for transient connections
-            self.device_path = self.device_infos[0].path
 
     def _connect_device(self) -> None:
         """Legacy function - now just stores device path."""
@@ -1669,7 +1928,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.device_path = info.path
         self.status_label.setText(f"Ready: {info.product}")
-        self._log(f"Device selected: {info.product} ({info.serial})")
+        self._log(f"Device selected: {info.product} ({info.display_path})")
 
     def _disconnect_device(self) -> None:
         """Legacy function - just clears device path."""
@@ -1677,12 +1936,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_label.setText("Disconnected")
         self._log("Device cleared")
 
-    def _refresh_and_connect(self) -> None:
+    def _refresh_and_connect(self, silent: bool = False) -> None:
         """Refresh devices and store path for transient connections."""
         self._log("Connect: Refreshing device list...")
         self._refresh_devices()
         if self.device_infos:
-            info = self.device_infos[0]
+            info = next((item for item in self.device_infos if not item.access_error),
+                        self.device_infos[0])
             self.device_path = info.path
 
             # Detect device type and swap profiles
@@ -1691,12 +1951,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._log(f"Connect: Device type changed: {self.device_type} -> {new_type}")
             self.device_type = new_type
             self.active_button_profiles = dd.get_button_profiles(self.device_type)
+            self._last_battery_led_level = None
+            self._last_battery_status = None
+            self._sync_battery_led_controls()
             self._rebuild_button_table()
 
             device_name = vp.DEVICE_NAMES.get((info.vendor_id, info.product_id), info.product)
             self.status_label.setText(f"Ready: {device_name}")
-            self.setWindowTitle(f"Venus Config v0.2.1 — {device_name}")
-            self._log(f"Connect: Found {device_name} ({self.device_type}) at {info.path}")
+            self.setWindowTitle(f"Venus Pro Config — {device_name}")
+            self._log(f"Connect: Found {device_name} ({self.device_type}) at {info.display_path}")
+            if info.selection_note:
+                self._log(f"Connect: {info.selection_note}")
 
             # Show/hide profile selector for Holtek
             is_holtek = self.device_type == 'holtek'
@@ -1708,12 +1973,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
             QtWidgets.QApplication.processEvents()
 
-            # Auto-read settings on startup
-            self._log("Connect: Triggering auto-read settings...")
-            self._read_settings()
+            if info.access_error:
+                self.status_label.setText(f"Detected: {device_name} — access denied")
+                self._log(f"Connect: {info.access_error}")
+            else:
+                # Auto-read settings on startup
+                self._log("Connect: Triggering auto-read settings...")
+                self._read_settings(silent=silent)
+                self._request_battery_refresh()
         else:
             self._log("Connect: No devices found.")
             self.status_label.setText("No device found")
+            self._request_battery_refresh()
 
     def _auto_connect(self) -> None:
         """Legacy function - handled by _refresh_and_connect now."""
@@ -1774,14 +2045,16 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
 
-    def _send_reports(self, reports: list[bytes], label: str) -> None:
+    def _send_reports(self, reports: list[bytes], label: str,
+                      quiet: bool = False) -> bool:
         """Send reports using a transient device connection."""
-        if not self._require_device():
-            return
+        if quiet and self.device_path is None:
+            return False
+        if not quiet and not self._require_device():
+            return False
 
         device = None
         try:
-            import time
             # Open device transiently using factory
             device = dd.create_device(self.device_type, self.device_path)
             device.open()
@@ -1791,9 +2064,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._log(f"{label}: {report.hex()}")
                 else:
                     self._log(f"TIMEOUT: {report.hex()}")
-                    raise RuntimeError(f"Device timed out on command {report[1]:02X}")
+                    raise RuntimeError(
+                        getattr(device, "last_error", "") or
+                        f"Device timed out on command {report[1]:02X}")
+            return True
         except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "Send failed", str(exc))
+            self._log(f"{label}: {exc}")
+            if not quiet:
+                QtWidgets.QMessageBox.critical(self, "Send failed", str(exc))
+            return False
         finally:
             # Always close the device
             if device:
@@ -1801,114 +2080,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def _sync_all_buttons(self) -> None:
-        """Sync ALL cached button assignments to the device (Reset + Upload)."""
-        if not self.device_path: return
-
-        # Progress Dialog
-        progress = QtWidgets.QProgressDialog("Syncing... (Resetting Device)", "Cancel", 0, 100, self)
-        progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
-        progress.show()
-        
-        try:
-            reports = []
-            # 1. Prepare (Cmd 04) - Matches working Windows sequence
-            reports.append(vp.build_simple(0x04))
-            
-            # 2. Build Packets
-            # Use sorted keys for deterministic packet order
-            keys = sorted(self.button_assignments.keys(), key=lambda k: int(k.split()[1]))
-            
-            for key in keys:
-                assign = self.button_assignments[key]
-                action = assign["action"]
-                params = assign["params"]
-                
-                # Resolve addresses
-                code_hi_base, code_lo, apply_offset_base = self._resolve_profile(key, use_fallback=True)
-                profile_pages = [0x00] # Only Page 0 needed for Binds? 
-                # Wait. Key Defs are on Page 1 (0x00+0x00 = 0x00? No, Code Hi is 0x01/0x02).
-                # Current logic used loop [0x00, 0x40, 0x80, 0xC0] to support profiles.
-                # Let's stick to that to be robust.
-                profile_pages = [0x00, 0x40, 0x80, 0xC0]
-                
-                for page in profile_pages:
-                    current_code_hi = code_hi_base + page
-                    
-                    if action == "Keyboard Key":
-                        hid_key = params.get("key", 0)
-                        modifier = params.get("mod", 0)
-                        # Page 1 Write (Key Def)
-                        reports.extend(vp.build_key_binding(current_code_hi, code_lo, hid_key, modifier))
-                        # Page 0 Bind (Type 05)
-                        reports.append(vp.build_keyboard_bind(apply_offset_base, page=page))
-
-                    elif action == "Disabled":
-                        reports.append(vp.build_disabled(apply_offset_base, page=page))
-                        
-                    elif action in ["Left Click", "Right Click", "Middle Click", "Forward", "Back"]:
-                         val_map = {"Left Click": 0x01, "Right Click": 0x02, "Middle Click": 0x04, "Back": 0x08, "Forward": 0x10}
-                         val = val_map.get(action, 0)
-                         reports.append(vp.build_mouse_param(apply_offset_base, val, page=page))
-                    
-                    elif action == "DPI Control":
-                         func_id = params.get("func", 1) # 1=Loop, 2=+, 3=-
-                         dummy_key = 0x23 if func_id==1 else (0x24 if func_id==2 else 0x25)
-                         reports.extend(vp.build_key_binding(current_code_hi, code_lo, dummy_key, 0))
-                         reports.append(vp.build_apply_binding(apply_offset_base, action_type=2, action_code=0x50, modifier=func_id, page=page))
-
-                    elif action in ["Fire Key", "Triple Click"]:
-                         delay = params.get("delay", 40)
-                         rep = params.get("repeat", 3)
-                         reports.append(vp.build_special_binding(apply_offset_base, delay, rep, page=page))
-                    
-                    elif action == "Media Key":
-                         reports.append(vp.build_apply_binding(apply_offset_base, action_type=5, action_code=0x51, page=page))
-                    
-                    elif action == "Macro":
-                         idx = params.get("index", 1)
-                         mode = params.get("mode", vp.MACRO_REPEAT_ONCE)
-                         reports.append(vp.build_macro_bind(apply_offset_base, idx-1, mode, page=page))
-
-            # 3. Commit
-            reports.append(vp.build_simple(0x04))
-            
-            # SYNC SEQUENCE
-            if self.device_path:
-                mouse = vp.VenusDevice(self.device_path)
-                mouse.open()
-                try:
-                    # 1. Prepare (Cmd 04)
-                    self._log("Readying device for sync...")
-                    if not mouse.send_reliable(vp.build_simple(0x04)):
-                        raise RuntimeError("Sync Timeout: Prepare (0x04)")
-
-                    # 2. Handshake (Cmd 03)
-                    if not mouse.send_reliable(vp.build_simple(0x03)):
-                        self._log("Sync failed: Handshake (0x03) timed out.")
-                        raise RuntimeError("Sync Timeout: Handshake (0x03)")
-                    
-                    # 3. Send All Packets
-                    total_pkts = len(reports)
-                    for i, r in enumerate(reports):
-                        if not mouse.send_reliable(r):
-                            raise RuntimeError(f"Sync Timeout: Packet {i} ({r.hex()})")
-                        
-                        if i % 5 == 0:
-                            pct = int((i / total_pkts) * 100)
-                            progress.setValue(pct)
-                            QtWidgets.QApplication.processEvents()
-                            self._log(f"Sync: {r.hex()}")
-                    
-                    progress.setValue(100)
-                    self._log("Sync Complete.")
-                finally:
-                    mouse.close()
-            
-        except Exception as e:
-            self._log(f"Sync Error: {e}")
-            QtWidgets.QMessageBox.critical(self, "Sync Error", str(e))
-        finally:
-            progress.close()
+        """Stage the cached assignments and use the normal transaction path."""
+        for key, assignment in self.button_assignments.items():
+            self.staging_manager.stage_change(
+                key, assignment["action"], assignment.get("params", {}))
+        self._update_staged_visuals()
+        self._commit_staged_changes()
 
 
     def _auto_stage_binding(self) -> None:
@@ -2014,7 +2191,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         elif action == "Macro":
             index = params.get("index", 1)
-            # mode is either a constant (1=Once, 2=Count?, F0=Hold, F1=Toggle) or raw count
+            # Mode is once/hold/toggle, or a raw repeat count (1..253).
             mode_val = params.get("mode", 1)
             
             mode_str = "Custom"
@@ -2138,12 +2315,15 @@ class MainWindow(QtWidgets.QMainWindow):
             # Holtek: enter write mode before sending packets
             if self.device_type == 'holtek':
                 device.enter_write_mode()
+            elif not device.begin_write():
+                raise RuntimeError(device.last_error or "Mouse did not enter ready state")
 
             builder = PacketBuilder(self)
             controller = TransactionController(device, builder, logger=self._log)
 
             # Progress dialog
-            progress = QtWidgets.QProgressDialog("Applying changes...", "Cancel", 0, 0, self)
+            progress = QtWidgets.QProgressDialog(
+                "Applying changes...", None, 0, 0, self)
             progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
             progress.show()
 
@@ -2180,7 +2360,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._update_staged_visuals()
                 QtWidgets.QMessageBox.information(self, "Success", "All changes applied successfully.")
             else:
-                QtWidgets.QMessageBox.critical(self, "Error", "Failed to apply changes. Device might be disconnected.")
+                QtWidgets.QMessageBox.critical(
+                    self, "Partial Write Possible",
+                    "A write failed. Earlier acknowledged changes may already be stored on the device; read settings again before retrying.")
                 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Error", str(e))
@@ -2201,123 +2383,80 @@ class MainWindow(QtWidgets.QMainWindow):
                                           profile=self.holtek_profile)
 
         reports = []
-        # Resolve addresses
-        # Note: This logic duplicates _sync_all_buttons. Should eventually replace it.
-        code_hi_base, code_lo, apply_offset_base = self._resolve_profile(key, use_fallback=True)
-        profile_pages = [0x00, 0x40, 0x80, 0xC0]
-        
-        for page in profile_pages:
-            current_code_hi = code_hi_base + page
-            
-            if action == "Keyboard Key":
-                hid_key = params.get("key", 0)
-                modifier = params.get("mod", 0)
-                # Page 1 Write (Key Def)
-                reports.extend(vp.build_key_binding(current_code_hi, code_lo, hid_key, modifier))
-                # Page 0 Bind (Type 05)
-                reports.append(vp.build_keyboard_bind(apply_offset_base, page=page))
+        code_hi, code_lo, apply_offset = self._resolve_profile(key, use_fallback=True)
 
-            elif action == "Disabled":
-                reports.append(vp.build_disabled(apply_offset_base, page=page))
-                
-            elif action in ["Left Click", "Right Click", "Middle Click", "Forward", "Back"]:
-                 val_map = {"Left Click": 0x01, "Right Click": 0x02, "Middle Click": 0x04, "Back": 0x08, "Forward": 0x10}
-                 val = val_map.get(action, 0)
-                 reports.append(vp.build_mouse_param(apply_offset_base, val, page=page))
-            
-            elif action == "DPI Control":
-                 func_id = params.get("func", 1) # 1=Loop, 2=+, 3=-
-                 dummy_key = 0x23 if func_id==1 else (0x24 if func_id==2 else 0x25)
-                 reports.extend(vp.build_key_binding(current_code_hi, code_lo, dummy_key, 0))
-                 reports.append(vp.build_apply_binding(apply_offset_base, action_type=2, action_code=0x50, modifier=func_id, page=page))
-
-            elif action in ["Fire Key", "Triple Click"]:
-                 delay = params.get("delay", 40)
-                 rep = params.get("repeat", 3)
-                 reports.append(vp.build_special_binding(apply_offset_base, delay, rep, page=page))
-            
-            elif action == "Media Key":
-                 reports.append(vp.build_apply_binding(apply_offset_base, action_type=5, action_code=0x51, page=page))
-            
-            elif action == "Macro":
-                 idx = params.get("index", 1)
-                 mode = params.get("mode", vp.MACRO_REPEAT_ONCE)
-                 reports.append(vp.build_macro_bind(apply_offset_base, idx-1, mode, page=page))
+        if action == "Keyboard Key":
+            reports.extend(vp.build_key_binding(
+                code_hi, code_lo, params.get("key", 0), params.get("mod", 0)))
+            reports.append(vp.build_keyboard_bind(apply_offset))
+        elif action == "Media Key":
+            reports.extend(vp.build_consumer_binding(
+                code_hi, code_lo, params.get("code", 0)))
+            reports.append(vp.build_keyboard_bind(apply_offset))
+        elif action == "Disabled":
+            reports.append(vp.build_disabled(apply_offset))
+        elif action in ["Left Click", "Right Click", "Middle Click", "Forward", "Back"]:
+            val_map = {"Left Click": 0x01, "Right Click": 0x02,
+                       "Middle Click": 0x04, "Back": 0x08, "Forward": 0x10}
+            reports.append(vp.build_mouse_param(apply_offset, val_map[action]))
+        elif action == "DPI Control":
+            reports.append(vp.build_dpi_control(apply_offset, params.get("func", 1)))
+        elif action in ["Fire Key", "Triple Click"]:
+            reports.append(vp.build_special_binding(
+                apply_offset, params.get("delay", 40), params.get("repeat", 3)))
+        elif action == "Polling Rate Toggle":
+            reports.append(vp.build_poll_rate_toggle(apply_offset))
+        elif action == "RGB Toggle":
+            reports.append(vp.build_rgb_toggle(apply_offset))
+        elif action == "Macro":
+            reports.append(vp.build_macro_bind(
+                apply_offset, params.get("index", 1) - 1,
+                params.get("mode", vp.MACRO_REPEAT_ONCE)))
+        else:
+            raise ValueError(f"Unsupported button action: {action}")
                  
         return reports
 
 
-    def _upload_macro(self) -> None:
+    def _upload_macro(self) -> bool:
         """Collect current macro and upload to device."""
         if not self.device_path:
-            return
+            return False
         
         macro_index = self.macro_bind_index_spin.value() - 1  # 0-indexed internally
-        if macro_index < 0 or macro_index > 11:
-            QtWidgets.QMessageBox.warning(self, "Invalid", "Macro Index must be 1-12.")
-            return
+        if macro_index < 0 or macro_index > 15:
+            QtWidgets.QMessageBox.warning(self, "Invalid", "Macro Index must be 1-16.")
+            return False
         try:
             # 1. Collect events from table
             raw_events = self._get_macro_events_from_table()
             if not raw_events:
                 QtWidgets.QMessageBox.warning(self, "Error", "No valid events to upload.")
-                return
+                return False
 
-            has_modifier = any(ev.is_modifier for ev in raw_events)
-            has_release = any(not ev.is_down for ev in raw_events)
-            if has_modifier:
-                events = list(raw_events)
-            else:
-                # Normalize to clean down/up pairs using key-down events only.
-                if has_release:
-                    self._log("Normalizing macro to clean down/up pairs.")
-                events = []
-                for ev in raw_events:
-                    if not ev.is_down:
-                        continue
-                    events.append(vp.MacroEvent(ev.keycode, True, ev.delay_ms, False))
-                    events.append(vp.MacroEvent(ev.keycode, False, ev.delay_ms, False))
+            # Preserve the editor's explicit press/release stream.  Rebuilding
+            # it from key-down rows destroyed mouse events and intentionally
+            # overlapping key sequences.
+            events = list(raw_events)
 
             if not events:
                 QtWidgets.QMessageBox.warning(self, "Error", "No valid events to upload.")
-                return
+                return False
 
             # Ensure last event delay = 3ms end marker.
             last = events[-1]
-            events[-1] = vp.MacroEvent(last.keycode, last.is_down, 3, last.is_modifier)
+            events[-1] = vp.MacroEvent(last.keycode, last.is_down, 3,
+                                       last.is_modifier, last.event_type)
+
+            if len(events) > vp.MACRO_MAX_EVENTS:
+                QtWidgets.QMessageBox.warning(
+                    self, "Too Many Events",
+                    f"A hardware macro slot holds at most {vp.MACRO_MAX_EVENTS} events.")
+                return False
             
             # 2. Build macro data buffer
-            macro_name = self.macro_name_edit.text()[:15] or "Macro"
-            name_utf16 = macro_name.encode('utf-16-le')
-            name_len = len(name_utf16)
-            name_padded = name_utf16.ljust(30, b'\x00')[:30]
-
-            # Header structure (32 bytes total):
-            # [0x00]: Name length in bytes
-            # [0x01-0x1E]: Name in UTF-16LE (30 bytes, padded)
-            # [0x1F]: Event count (actual number of events)
-            event_count = len(events)
-            header = bytes([name_len]) + name_padded + bytes([event_count])
-
-            # Event data starts at offset 0x20 (32)
-            event_data = b''.join(ev.to_bytes() for ev in events)
-
-            # Full macro buffer (header + events)
-            full_macro = header + event_data
-
-            # 3. Calculate terminator checksum
-            chk = vp.calculate_terminator_checksum(
-                full_macro,
-                event_count=event_count,
-            )
-            
-            # Terminator is 4 bytes: [checksum] [00] [00] [00]
-            terminator = bytes([chk, 0x00, 0x00, 0x00])
-            full_macro += terminator
-
-            # Pad to 10-byte boundary (AFTER adding terminator)
-            pad_len = (10 - (len(full_macro) % 10)) % 10
-            full_macro += bytes(pad_len)
+            macro_name = self.macro_name_edit.text() or "Macro"
+            full_macro = vp.build_macro_image(macro_name, events)
             
             # Get slot address
             page, offset = vp.get_macro_slot_info(macro_index)
@@ -2325,10 +2464,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log(f"Uploading Macro {macro_index+1} ({macro_name}) to Page 0x{page:02X} Offset 0x{offset:02X}...")
             
             # Build reports
-            reports = [
-                vp.build_simple(0x04),  # Prepare
-                vp.build_simple(0x03)   # Handshake
-            ]
+            reports = [vp.build_simple(vp.CMD_READY)]
             
             # Split into 10-byte chunks
             addr = (page << 8) | offset
@@ -2339,15 +2475,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 chunk_off = chunk_addr & 0xFF
                 reports.append(vp.build_macro_chunk(chunk_off, chunk, chunk_page))
             
-            # Commit
-            reports.append(vp.build_simple(0x04))
-            
-            self._send_reports(reports, f"Macro {macro_index+1} Upload ({len(full_macro)} bytes)")
-            QtWidgets.QMessageBox.information(self, "Success", f"Macro {macro_index+1} uploaded successfully!")
+            success = self._send_reports(
+                    reports,
+                    f"Macro {macro_index+1} Upload ({len(full_macro)} bytes)")
+            if success:
+                QtWidgets.QMessageBox.information(
+                    self, "Success", f"Macro {macro_index+1} uploaded successfully!")
+            return success
 
         except Exception as e:
             self._log(f"Macro Upload Error: {e}")
             QtWidgets.QMessageBox.critical(self, "Upload Error", str(e))
+            return False
 
     def _bind_macro_to_button(self) -> None:
         """Rebind an already-uploaded macro to a different button using Sync logic."""
@@ -2358,24 +2497,31 @@ class MainWindow(QtWidgets.QMainWindow):
         macro_index = self.macro_bind_index_spin.value()
         repeat_mode = self.macro_tab_repeat_combo.currentData()
         repeat_count = self.macro_tab_repeat_count_spin.value()
+        effective_repeat = repeat_count if repeat_mode == vp.MACRO_REPEAT_COUNT else repeat_mode
         
         # update central state
         self.button_assignments[button_key] = {
             "action": "Macro", 
-            "params": {"index": macro_index, "mode": repeat_mode, "count": repeat_count}
+            "params": {"index": macro_index, "mode": effective_repeat,
+                       "count": repeat_count}
         }
+        self.staging_manager.stage_change(
+            button_key, "Macro",
+            {"index": macro_index, "mode": effective_repeat})
+        self._update_staged_visuals()
         
         # Give feedback
         QtWidgets.QMessageBox.information(self, "Binding", f"Queueing Bind: {button_key} -> Macro {macro_index}.\nSyncing now...")
         
-        # Sync
-        self._sync_all_buttons()
+        self._commit_staged_changes()
 
 
     def _apply_rgb_preset(self) -> None:
+        if self.battery_led_enabled and self.device_type == "venus_pro":
+            self._set_battery_led_enabled(False, restore=False)
         preset_key = self.rgb_select.currentText()
         payload = vp.RGB_PRESETS[preset_key]
-        reports = [vp.build_simple(0x03), vp.build_report(0x07, payload), vp.build_simple(0x04)]
+        reports = [vp.build_simple(vp.CMD_READY), vp.build_report(vp.CMD_WRITE, payload)]
         self._send_reports(reports, f"RGB Preset: {preset_key}")
 
     def _apply_rgb_custom(self) -> None:
@@ -2390,9 +2536,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.device_type == 'holtek':
             return self._apply_rgb_holtek(r, g, b, mode, brightness)
 
+        if self.battery_led_enabled:
+            self._set_battery_led_enabled(False, restore=False)
+
         rgb_packet = vp.build_rgb(r, g, b, mode, brightness)
-        # Sequence based on confirmed captures: 03 (Handshake), [RGB Data], 04 (Commit)
-        reports = [vp.build_simple(0x03), rgb_packet, vp.build_simple(0x04)]
+        reports = [vp.build_simple(vp.CMD_READY), rgb_packet]
 
         mode_name = self.rgb_mode.currentText()
         self._send_reports(reports, f"RGB Custom: #{r:02x}{g:02x}{b:02x} {mode_name} {brightness}%")
@@ -2405,7 +2553,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return self._apply_polling_holtek(rate)
 
         payload = vp.POLLING_RATE_PAYLOADS[rate]
-        reports = [vp.build_simple(0x04), vp.build_simple(0x03), vp.build_report(0x07, payload)]
+        reports = [vp.build_simple(vp.CMD_READY), vp.build_report(vp.CMD_WRITE, payload)]
         self._send_reports(reports, f"Polling {rate} Hz")
 
     def _sync_dpi_presets(self) -> None:
@@ -2428,13 +2576,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.device_type == 'holtek':
             return self._apply_dpi_holtek()
 
-        reports = [vp.build_simple(0x03)]
+        reports = [vp.build_simple(vp.CMD_READY)]
         for slot, (_, _, value_spin, tweak_spin) in enumerate(self.dpi_rows):
             value = value_spin.value()
             tweak = vp.dpi_value_to_tweak(value)
             tweak_spin.setValue(tweak)
             reports.append(vp.build_dpi(slot, value, tweak))
-        # reports.append(vp.build_simple(0x04)) # No trailing 0x04
         self._send_reports(reports, "DPI slots")
 
     def _on_dpi_spin_changed(self, row_index: int) -> None:
@@ -2663,18 +2810,19 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            self._send_reports([vp.build_simple(0x09)], "Factory reset")
-            QtWidgets.QMessageBox.information(self, "Reset Complete", "Factory reset command sent.")
+            if self._send_reports(
+                    [vp.build_simple(vp.CMD_FACTORY_RESET)], "Factory reset"):
+                QtWidgets.QMessageBox.information(
+                    self, "Reset Complete", "Factory reset command acknowledged.")
 
     def _reclaim_device(self) -> None:
         """Attempt to reclaim all Venus devices from other processes."""
         self._log("USB: Attempting to reclaim Venus devices from other processes...")
         found = False
-        for vid in vp.VENDOR_IDS:
-            for pid in vp.PRODUCT_IDS:
-                if vp.reclaim_device(vid, pid):
-                    self._log(f"USB: Reclaim attempt sent to {vid:04X}:{pid:04X}")
-                    found = True
+        for vid, pid in sorted(vp.SUPPORTED_DEVICE_IDS):
+            if vp.reclaim_device(vid, pid):
+                self._log(f"USB: Reclaim attempt sent to {vid:04X}:{pid:04X}")
+                found = True
         
         if found:
             self._log("USB: Reclaim sequence complete. Refreshing...")
@@ -2684,12 +2832,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log("USB: No devices found to reclaim.")
             QtWidgets.QMessageBox.information(self, "Device Reclaim", "No Venus Pro devices found on the USB bus.")
 
-    def _read_settings(self) -> None:
-        if not self._require_device(auto_mode=True):
+    def _read_settings(self, silent: bool = False) -> None:
+        if not self._require_device(auto_mode=silent):
             return
 
         if self.device_type == 'holtek':
-            return self._read_settings_holtek()
+            return self._read_settings_holtek(silent=silent)
 
         self._log("--- Reading from Device ---")
         device = None
@@ -2702,11 +2850,8 @@ class MainWindow(QtWidgets.QMainWindow):
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    # Enter read mode with handshake only (Windows sends 0x03 to start reads)
-                    device.send(vp.build_simple(0x03))
-                    
-                    # Try reading Page 0 to verify connection
-                    device.read_flash(0, 0, 8)
+                    if not device.start_session():
+                        raise vp.ProtocolError("startup challenge was rejected")
                     break # Success
                 except Exception as e:
                     if attempt < max_retries - 1:
@@ -2719,23 +2864,24 @@ class MainWindow(QtWidgets.QMainWindow):
                     else:
                         raise e
             
-            # Page 0 contains most settings
+            # The vendor utility reads the 0x0000..0x009f configuration block.
             page0 = bytearray()
-            # Read in larger chunks if reliable, but sticking to 8 bytes for now
-            for offset in range(0, 256, 8):
-                chunk = device.read_flash(0, offset, 8)
+            for offset in range(0, 0xA0, 10):
+                chunk = device.read_flash(0, offset, 10)
                 page0.extend(chunk)
             
             # Page 1 contains keyboard mappings (Part 1)
             page1 = bytearray()
-            for offset in range(0, 256, 8):
-                chunk = device.read_flash(1, offset, 8)
+            for offset in range(0, 256, 10):
+                length = min(10, 256 - offset)
+                chunk = device.read_flash(1, offset, length)
                 page1.extend(chunk)
 
             # Page 2 contains keyboard mappings (Part 2)
             page2 = bytearray()
-            for offset in range(0, 256, 8):
-                chunk = device.read_flash(2, offset, 8)
+            for offset in range(0, 256, 10):
+                length = min(10, 256 - offset)
+                chunk = device.read_flash(2, offset, length)
                 page2.extend(chunk)
 
 
@@ -2755,15 +2901,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 if i < len(self.dpi_rows):
                     combo, dpi_spin, value_spin, tweak_spin = self.dpi_rows[i]
                     combo.blockSignals(True)
-                    # Find DPI in combo
-                    found = False
-                    for idx in range(combo.count()):
-                        if combo.itemData(idx) == closest_dpi:
-                            combo.setCurrentIndex(idx)
-                            found = True
-                            break
-                    if not found:
-                        combo.setCurrentIndex(0) # Custom
+                    # Do not label an arbitrary raw value as a factory preset.
+                    exact_preset = vp.DPI_PRESETS.get(closest_dpi, {}).get("value") == val
+                    if exact_preset:
+                        for idx in range(combo.count()):
+                            if combo.itemData(idx) == closest_dpi:
+                                combo.setCurrentIndex(idx)
+                                break
+                    else:
+                        combo.setCurrentIndex(0)  # Custom
                     
                     dpi_spin.blockSignals(True)
                     value_spin.blockSignals(True)
@@ -2778,50 +2924,36 @@ class MainWindow(QtWidgets.QMainWindow):
                     combo.blockSignals(False)
 
             # 2. Polling Rate
-            poll_code = page0[0x04]
-            rate = 1000
-            if poll_code == 0x04: rate = 125
-            elif poll_code == 0x02: rate = 250
-            elif poll_code == 0x01: rate = 500
-            elif poll_code == 0x00: rate = 1000
+            poll_code = page0[0x00]
+            rate = vp.POLLING_CODE_TO_RATE.get(poll_code)
             
             # Find the rate in the combo box
             for i in range(self.polling_select.count()):
-                if self.polling_select.itemData(i) == rate:
+                if rate is not None and self.polling_select.itemData(i) == rate:
                     self.polling_select.setCurrentIndex(i)
                     self._log(f"  Polling Rate: {rate}Hz")
                     break
 
             # 3. RGB Settings
-            rgb_r = page0[0x55]
-            rgb_g = page0[0x56]
-            rgb_b = page0[0x57]
+            rgb_r = page0[0x54]
+            rgb_g = page0[0x55]
+            rgb_b = page0[0x56]
             rgb_mode = page0[0x58]
-            brightness_b1 = page0[0x5B]
-            
-            self.rgb_current_color = QtGui.QColor(rgb_r, rgb_g, rgb_b)
-            self.rgb_color_button.setStyleSheet(
-                f"background-color: {self.rgb_current_color.name()}; "
-                f"color: {'white' if self.rgb_current_color.lightness() < 128 else 'black'}; "
-                f"font-weight: bold;"
-            )
-            
-            # Update mode combo
-            # Map 0x56/0x57 back to our labels
-            if rgb_mode == 0x56:
-                idx = self.rgb_mode.findData(vp.RGB_MODE_STEADY)
-                if idx >= 0: self.rgb_mode.setCurrentIndex(idx)
-            elif rgb_mode == 0x57:
-                idx = self.rgb_mode.findData(vp.RGB_MODE_BREATHING) # Or neon
-                if idx >= 0: self.rgb_mode.setCurrentIndex(idx)
-            elif rgb_mode == 0x00: # Off
-                idx = self.rgb_mode.findData(vp.RGB_MODE_OFF)
-                if idx >= 0: self.rgb_mode.setCurrentIndex(idx)
-            
-            # Brightness
-            brightness = int(brightness_b1 / 3)
-            self.rgb_brightness.setValue(brightness)
-            self.rgb_brightness_label.setText(f"{brightness}%")
+            brightness_b1 = page0[0x5A]
+            brightness = (100 if brightness_b1 == 0xFF else
+                          0 if brightness_b1 <= 1 else
+                          min(100, round(brightness_b1 / 3)))
+
+            # While battery mode owns the hardware LED, retain the saved
+            # manual lighting in the controls so disabling can restore it.
+            if self.battery_led_enabled and self._battery_led_restore:
+                self._apply_rgb_restore_to_widgets(self._battery_led_restore)
+            else:
+                self._set_custom_color(QtGui.QColor(rgb_r, rgb_g, rgb_b))
+                mode_index = self.rgb_mode.findData(rgb_mode)
+                if mode_index >= 0:
+                    self.rgb_mode.setCurrentIndex(mode_index)
+                self.rgb_brightness.setValue(brightness)
             self._log(f"  RGB: ({rgb_r},{rgb_g},{rgb_b}), Mode: 0x{rgb_mode:02X}, Brightness: {brightness}%")
 
             # 4. Button Bindings
@@ -2838,84 +2970,43 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._log(f"DEBUG: Parsing {button_key} (Offset 0x{offset:02X}) -> Type 0x{btype:02X}, D1 0x{d1:02X}, D2 0x{d2:02X}")
 
                 if btype == vp.BUTTON_TYPE_MOUSE:
-                    if d1 == 0x01: action = "Left Click"
-                    elif d1 == 0x02: action = "Right Click"
-                    elif d1 == 0x04: action = "Middle Click"
-                    elif d1 == 0x08: action = "Back"
-                    elif d1 == 0x10: action = "Forward"
-                    else: action = f"Mouse Button (0x{d1:02X})"
-                
-                # Correct parsing maps back to dict for consistent params
-                params = {}
-                if action in ["Left Click", "Right Click", "Middle Click", "Back", "Forward"]:
-                    params["type"] = "mouse" # just context
-                
-                # Split logic: Type 0x05 is Standard Keyboard, Type 0x02 is DPI Legacy
-                elif btype == vp.BUTTON_TYPE_KEYBOARD: # 0x05 (Standard/Complex)
-                    p1_offset = profile.code_lo
-                    # ... (rest of keyboard logic follows)
-                    
-                elif btype == vp.BUTTON_TYPE_DPI_LEGACY: # 0x02 (DPI Shortcuts)
-                    action = "DPI Control"
-                    # D1 determines function: 02=Loop, 03=+, 01=-
-                    params["dpi_func"] = d1
-                    
-                # Continue with old logic for compat if needed, but the elif above handles 0x05
-                if btype == vp.BUTTON_TYPE_KEYBOARD: # Re-enter block for keyboard processing
-                    p1_offset = profile.code_lo
-                    # Use code_hi to determine which page to read from
-                    kbd_page_src = page1 if profile.code_hi == 0x01 else page2
-                    page_name = "Page 1" if profile.code_hi == 0x01 else "Page 2"
-                    
-                    self._log(f"  DEBUG: Checking {page_name} offset 0x{p1_offset:02X}")
-                    
-                    kbd_page = kbd_page_src # Alias
-                    
-                    # Ensure offset is within bounds (256 bytes per page)
-                    if p1_offset + 8 <= len(kbd_page):
-                        # Dump raw bytes for debugging
-                        raw_bytes = kbd_page[p1_offset : p1_offset + 8]
-                        self._log(f"  DEBUG: Raw Kbd Data: {raw_bytes.hex()}")
-
-                        # Flash format seems to be: [Type] [Header] [Key] [Mod] ... without the 0x08 length byte
-                        p1_type = kbd_page[p1_offset + 0]
-                        p1_header = kbd_page[p1_offset + 1]
-                        
-                     
-                        if p1_type == 0x02:
-                            # Standard Key or Media
-                            if p1_header == 0x81: # Keyboard
-                                action = "Keyboard Key"
-                                params["key"] = kbd_page[p1_offset + 2]
-                                # Modifier is in Page 0 D1 field, NOT Page 1/2 data
-                                params["mod"] = d1
-                            elif p1_header == 0x82: # Media
-                                action = "Media Key"
-                                params["key"] = kbd_page[p1_offset + 2]
-                            else:
-                                action = f"Unknown Kbd (02 {p1_header:02X})"
-                        elif p1_type == 0x04:
-                            # Complex binding (4-event stream with modifiers)
-                            # Format: [04] [80 MM 00] [81 KK 00] [40 MM 00] [41 KK 00] [Guard]
-                            # Byte offsets: 0=count, 1=80(ModDn), 2=Modifier, 3=pad, 4=81(KeyDn), 5=Key, 6=pad
-                            action = "Keyboard Key"
-                            params["key"] = kbd_page[p1_offset + 5]  # Key is at offset+5 (after 81)
-                            # For 4-event stream, modifier is embedded in the ModDn event (byte 2)
-                            params["mod"] = kbd_page[p1_offset + 2]  # Modifier from ModDn event
-                        elif p1_type == 0x06:
-                            # Multi-modifier binding (6-event stream: Ctrl+Shift+Key)
-                            # Format: [06] [80 M1 00] [80 M2 00] [81 KK 00] [40 M1 00] [40 M2 00] [41 KK 00]
-                            # Byte offsets: 0=count, 1-3=ModDn1, 4-6=ModDn2, 7=81(KeyDn), 8=Key
-                            action = "Keyboard Key"
-                            params["key"] = kbd_page[p1_offset + 8]  # Key is at offset+8 (after two ModDn + 81)
-                            # Combine both modifiers (OR them together)
-                            mod1 = kbd_page[p1_offset + 2]  # First modifier
-                            mod2 = kbd_page[p1_offset + 5]  # Second modifier
-                            params["mod"] = mod1 | mod2
-                        else:
-                            action = f"Unknown Type (0x{p1_type:02X})"
+                    action = {
+                        0x01: "Left Click", 0x02: "Right Click",
+                        0x04: "Middle Click", 0x08: "Back", 0x10: "Forward",
+                    }.get(d1, f"Mouse Button (0x{d1:02X})")
+                elif btype == vp.BUTTON_TYPE_KEYBOARD:
+                    definition_page = page1 if profile.code_hi == 0x01 else page2
+                    block = bytes(definition_page[profile.code_lo:profile.code_lo + 0x20])
+                    count = block[0] if block else 0
+                    needed = 1 + count * 3 + 1
+                    if count == 0 or needed > len(block):
+                        action = "Invalid Key Definition"
                     else:
-                        action = "Disabled (OOB)"
+                        if sum(block[:needed]) & 0xFF != 0x55:
+                            self._log(f"  Warning: {button_key} key definition checksum is invalid")
+                        modifiers = 0
+                        keycode = None
+                        consumer_usage = None
+                        for event_index in range(count):
+                            start = 1 + event_index * 3
+                            status, code_lo, code_hi = block[start:start + 3]
+                            if status == 0x80:
+                                modifiers |= code_lo
+                            elif status == 0x81 and keycode is None:
+                                keycode = code_lo
+                            elif status == 0x82 and consumer_usage is None:
+                                consumer_usage = code_lo | (code_hi << 8)
+                        if consumer_usage is not None:
+                            action = "Media Key"
+                            params = {"code": consumer_usage}
+                        elif keycode is not None:
+                            action = "Keyboard Key"
+                            params = {"key": keycode, "mod": modifiers}
+                        else:
+                            action = "Unknown Key Definition"
+                elif btype == vp.BUTTON_TYPE_DPI_LEGACY:
+                    action = "DPI Control"
+                    params = {"func": d1}
                 elif btype == vp.BUTTON_TYPE_MACRO:
                     action = "Macro"
                     macro_index = d1
@@ -2929,17 +3020,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     else:
                         params["count"] = 1 # Default for other modes
                     
-                    # Fetch macro name from its flash page
-                    m_page, m_offset = vp.get_macro_slot_info(d1)
-                    try:
-                        name_chunk = device.read_flash(m_page, m_offset, 8)
-                        if name_chunk and name_chunk[0] > 0 and name_chunk[0] <= 22:
-                            nlen = name_chunk[0]
-                            params["name"] = name_chunk[1:1+nlen].decode('utf-16le', errors='ignore')
-                        else:
-                            params["name"] = f"Macro {macro_index+1}"
-                    except:
-                        params["name"] = f"Macro {macro_index+1}"
+                    params["name"] = self.macro_names.get(
+                        macro_index + 1, f"Macro {macro_index + 1}")
                 elif btype == vp.BUTTON_TYPE_SPECIAL:
                     action = "Triple Click" if d1 == 50 else "Fire Key"
                     params["delay"] = d1
@@ -2962,11 +3044,19 @@ class MainWindow(QtWidgets.QMainWindow):
             # Sending 0x04/0x03 here would RE-ENTER config mode and break button inputs!
             
             self._log("--- Done Reading ---")
-            QtWidgets.QMessageBox.information(self, "Read Success", "Configuration successfully read from device.")
+            self.status_label.setText("Status: Ready — configuration read")
+            self.status_label.setStyleSheet("")
+            if not silent:
+                QtWidgets.QMessageBox.information(
+                    self, "Read Success",
+                    "Configuration successfully read from device.")
 
         except Exception as e:
             self._log(f"Error reading configuration: {e}")
-            QtWidgets.QMessageBox.critical(self, "Read Error", str(e))
+            self.status_label.setText("Status: Read failed — see log")
+            self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+            if not silent:
+                QtWidgets.QMessageBox.critical(self, "Read Error", str(e))
         finally:
             # Always close the device
             if device:
@@ -3056,7 +3146,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         except Exception as e:
             self._log(f"Error reading Holtek configuration: {e}")
-            QtWidgets.QMessageBox.critical(self, "Read Error", str(e))
+            self.status_label.setText("Status: Read failed — see log")
+            self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+            if not silent:
+                QtWidgets.QMessageBox.critical(self, "Read Error", str(e))
         finally:
             if device:
                 device.close()
@@ -3079,25 +3172,37 @@ class MainWindow(QtWidgets.QMainWindow):
         progress.show()
         
         device = None
+        cancelled = False
         try:
             # Open device transiently
             device = vp.VenusDevice(self.device_path)
             device.open()
+            if not device.start_session():
+                raise vp.ProtocolError("startup challenge was rejected")
             
             with open(fname, "wb") as f:
                 for page in range(256):
                     if progress.wasCanceled():
+                        cancelled = True
                         break
                     progress.setValue(page)
                     
                     # Read page (256 bytes)
                     page_data = bytearray()
-                    for offset in range(0, 256, 8):
-                        chunk = device.read_flash(page, offset, 8)
+                    for offset in range(0, 256, 10):
+                        length = min(10, 256 - offset)
+                        chunk = device.read_flash(page, offset, length)
                         page_data.extend(chunk)
                     f.write(page_data)
-            self._log(f"Profile exported to {fname}")
-            QtWidgets.QMessageBox.information(self, "Export Successful", f"Profile saved to {fname}")
+            if cancelled:
+                self._log(f"Profile export canceled; partial dump remains at {fname}")
+                QtWidgets.QMessageBox.information(
+                    self, "Export Canceled", f"A partial dump remains at {fname}")
+            else:
+                progress.setValue(256)
+                self._log(f"Profile exported to {fname}")
+                QtWidgets.QMessageBox.information(
+                    self, "Export Successful", f"Profile saved to {fname}")
         except Exception as e:
             self._log(f"Export failed: {e}")
             QtWidgets.QMessageBox.critical(self, "Export Failed", str(e))
@@ -3120,7 +3225,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
             
         try:
-            data = open(fname, "rb").read()
+            data = Path(fname).read_bytes()
             if len(data) != 65536: # 256 * 256
                 QtWidgets.QMessageBox.warning(self, "Invalid File", f"File size must be exactly 64KB (got {len(data)} bytes).")
                 return
@@ -3142,19 +3247,20 @@ class MainWindow(QtWidgets.QMainWindow):
         progress.show()
         
         device = None
+        imported = False
+        cancelled = False
         try:
             # Open device transiently
             device = vp.VenusDevice(self.device_path)
             device.open()
-            
-            # Send initial prepare
-            device.send(vp.build_simple(0x03))
-            device.send(vp.build_simple(0x03))
-            
-            import time
+            if not device.start_session():
+                raise vp.ProtocolError("startup challenge was rejected")
+            if not device.begin_write():
+                raise RuntimeError(device.last_error or "Mouse did not enter ready state")
             
             for page in range(256):
                 if progress.wasCanceled():
+                    cancelled = True
                     break
                 progress.setValue(page)
                 
@@ -3164,17 +3270,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 
                 # Write in 10-byte chunks (protocol limit)
                 for offset in range(0, 256, 10):
+                    if progress.wasCanceled():
+                        cancelled = True
+                        break
                     chunk = page_data[offset : offset + 10]
                     packet = vp.build_flash_write(page, offset, chunk)
-                    device.send(packet)
-                    time.sleep(0.002)
-                    
-            # Finalize
-            device.send(vp.build_simple(0x04))
-            device.send(vp.build_simple(0x04))
-            
-            self._log(f"Profile imported from {fname}")
-            QtWidgets.QMessageBox.information(self, "Import Successful", "Profile successfully written to device.")
+                    if not device.send_reliable(packet):
+                        raise RuntimeError(
+                            device.last_error or
+                            f"Write failed at 0x{page:02x}{offset:02x}")
+                if cancelled:
+                    break
+
+            if cancelled:
+                self._log("Profile import canceled; the device contains a partial write")
+                QtWidgets.QMessageBox.warning(
+                    self, "Import Canceled",
+                    "Import stopped after a partial write. Re-import a complete profile before relying on the device configuration.")
+            else:
+                imported = True
+                progress.setValue(256)
+                self._log(f"Profile imported from {fname}")
+                QtWidgets.QMessageBox.information(
+                    self, "Import Successful", "Profile successfully written to device.")
             
         except Exception as e:
             self._log(f"Import failed: {e}")
@@ -3184,8 +3302,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 device.close()
             progress.close()
         
-        # Reload settings (after device is closed)
-        self._read_settings()
+        # Reload settings only after a complete import (and after closing HID).
+        if imported:
+            self._read_settings()
 
     def _initialize_default_assignments(self) -> None:
         """Initialize assignments with Disabled for all known buttons."""
@@ -3234,38 +3353,26 @@ class MainWindow(QtWidgets.QMainWindow):
             # Open device transiently
             device = vp.VenusDevice(self.device_path)
             device.open()
-            
-            # Read two pages of macro data
-            for off in range(0, 256, 8):
-                data.extend(device.read_flash(start_page, off, 8))
-            for off in range(0, 256, 8):
-                data.extend(device.read_flash(start_page + 1, off, 8))
-            
-            # Slice relevant part
-            if start_offset == 0:
-                raw_macro = data[0:384]
-            else:
-                raw_macro = data[128 : 128 + 384]
+            if not device.start_session():
+                raise vp.ProtocolError("startup challenge was rejected")
+
+            # Read exactly one 0x180-byte slot from its absolute address.
+            slot_address = (start_page << 8) | start_offset
+            for relative in range(0, 0x180, vp.MAX_DATA_LEN):
+                address = slot_address + relative
+                length = min(vp.MAX_DATA_LEN, 0x180 - relative)
+                data.extend(device.read_flash(
+                    (address >> 8) & 0xFF, address & 0xFF, length))
+            raw_macro = bytes(data)
                 
             # Parse Name
-            slot_in_data = raw_macro[0]
-            self._log(f"  Slot index in data: {slot_in_data}")
-            
-            # Find name by looking for null terminator in UTF-16LE
-            name_bytes = bytearray()
-            for i in range(1, 29, 2):
-                if i+1 < len(raw_macro):
-                    lo = raw_macro[i]
-                    hi = raw_macro[i+1]
-                    if lo == 0 and hi == 0:
-                        break
-                    name_bytes.extend([lo, hi])
-            
-            if name_bytes:
+            name_length = raw_macro[0]
+            self._log(f"  Name length: {name_length} bytes")
+            if 0 < name_length <= 30 and name_length % 2 == 0:
                 try:
-                    name = name_bytes.decode('utf-16le')
+                    name = raw_macro[1:1 + name_length].decode('utf-16le')
                     self.macro_name_edit.setText(name)
-                except:
+                except UnicodeDecodeError:
                     self.macro_name_edit.setText(f"Macro {slot_index}")
             else:
                 self.macro_name_edit.setText(f"Macro {slot_index}")
@@ -3273,25 +3380,49 @@ class MainWindow(QtWidgets.QMainWindow):
             # Parse Events
             self.macro_event_table.setRowCount(0)
             event_offset = 0x20
-            
-            while event_offset < 380:
+            event_count = raw_macro[0x1F]
+            if event_count > vp.MACRO_MAX_EVENTS:
+                raise vp.ProtocolError(
+                    f"macro slot reports impossible event count {event_count}")
+            events_end = event_offset + event_count * 5
+            expected_checksum = vp.calculate_terminator_checksum(
+                raw_macro, event_count)
+            if raw_macro[events_end] != expected_checksum:
+                self._log(
+                    f"  Warning: macro checksum is invalid "
+                    f"(stored {raw_macro[events_end]:02x}, expected {expected_checksum:02x})")
+            mouse_names = {
+                0x01: "Mouse: Left Button",
+                0x02: "Mouse: Right Button",
+                0x04: "Mouse: Middle Button",
+                0x08: "Mouse: Back Button",
+                0x10: "Mouse: Forward Button",
+            }
+
+            for _ in range(event_count):
                 if event_offset + 5 > 384:
                     break
                     
                 b0 = raw_macro[event_offset]
                 b1 = raw_macro[event_offset+1]
                 
-                if b0 not in (0x81, 0x41, 0x80, 0x40):
+                if b0 not in (0x81, 0x41, 0x80, 0x40, 0x84, 0x44):
                     break
                     
                 keycode = b1
                 delay = (raw_macro[event_offset+3] << 8) | raw_macro[event_offset+4]
-                is_down = (b0 == 0x81 or b0 == 0x80)
+                is_down = bool(b0 & 0x80)
                 is_modifier = (b0 == 0x80 or b0 == 0x40)
-                
-                key_name = self.HID_USAGE_TO_NAME.get(keycode, f"Key 0x{keycode:02X}")
-                
-                self._add_event_to_table(key_name, is_down, delay, is_modifier)
+                is_mouse = (b0 & 0x07) == 0x04
+
+                if is_mouse:
+                    key_name = mouse_names.get(keycode, f"Mouse: Button 0x{keycode:02X}")
+                    self._add_event_to_table(key_name, is_down, delay,
+                                             event_type="mouse", keycode=keycode)
+                else:
+                    key_name = self.HID_USAGE_TO_NAME.get(keycode, f"Key 0x{keycode:02X}")
+                    self._add_event_to_table(key_name, is_down, delay, is_modifier,
+                                             keycode=keycode)
                 
                 event_offset += 5
                 
