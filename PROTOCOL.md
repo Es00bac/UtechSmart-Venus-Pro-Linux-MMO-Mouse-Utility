@@ -186,6 +186,12 @@ The fifth edited filename is ambiguous (`1410` vs `14100`) and is not used as a
 conversion anchor. Raw X/Y and the record checksum are known; a complete
 per-sensor DPI table remains an open item. **Capture, Binary**
 
+The application exposes the model-configured one-to-five enabled stages and
+writes the two-byte count record at `0x0002` as `[count, 0x55-count]`. Although
+the EEPROM layout reserves eight records, the supplied model configuration and
+Windows UI expose five; slots six through eight are therefore not presented as
+confirmed user-facing stages. **Binary; five-stage model limit is Capture/UI**
+
 ### Button action table
 
 There are 16 records at `0x0060 + 4*index`. Every record is:
@@ -309,6 +315,17 @@ checksum = (0x55 - event_count - sum(serialized_events)) & 0xff
 A slot can hold at most 69 events (`32 + 69*5 + 4 = 381`). The vendor forces a
 minimum event delay of 3 ms during conversion. **Capture, Binary**
 
+The delay is attached to the event before it. For a simple generated character,
+the key-down delay is its hold duration and the key-up delay is the gap before
+the next key. The application-level text builder can use one fixed gap or
+sample each gap from a user-selected range, then stores those sampled values as
+ordinary fixed event delays. Randomness is not a firmware playback feature.
+
+US-layout unshifted characters consume two events. Shifted characters consume
+four and use modifier event code `20`, the value seen in captured macro data.
+The editor rejects unsupported text or output above 69 events before writing.
+**Capture-backed serialization; builder timing policy**
+
 Macro action repeat byte:
 
 - `01..fd`: repeat count
@@ -353,6 +370,41 @@ It has five real hardware profiles and a 20-entry button map. Entries 4 and 5
 (zero-based indices) are physical DPI Up and DPI Down, so those controls can be
 rebound. Areson profile bases, checksums, command `04`, and macro layout do not
 apply to it. See `holtek_protocol.py` for the complete implemented map.
+
+Confirmed Holtek profile data represented by the UI now includes:
+
+- the active profile at `0x003d` and five profile bases;
+- 1–10 DPI entries per profile, with `[count, 00, current_index, 00]` headers;
+- six-byte DPI entries `[01, raw_dpi, color_index, 00, 00, 00]`, where one raw
+  unit is 200 DPI;
+- per-profile lighting records `[80, R, G, B, mode, brightness, speed, 03]`;
+- physical Profile Switch (`8d`), DPI Up (`8a`), and DPI Down (`89`) button
+  actions.
+
+When editing Holtek DPI, the application preserves the read color indices and
+current stage instead of zeroing both fields. Effect speed is exposed as a raw
+byte because its storage location is known but its user-facing scale is
+firmware-defined. Holtek keyboard-button records contain one HID usage and no
+modifier field. **Binary, live implementation history**
+
+## Protocol-to-UI coverage
+
+| Capability | Areson UI | Holtek UI |
+|---|---|---|
+| Physical button map | 16 mapped controls | 19 physical entries (unused slot hidden) |
+| Keyboard binding | key + Ctrl/Shift/Alt/GUI | one key; modifiers disabled |
+| Mouse actions | left/right/middle/back/forward | left/right/middle/back/forward |
+| DPI button actions | loop/up/down on mapped controls | up/down, including physical top buttons |
+| Profile switching | generic type hidden for this one-profile model | confirmed `8d` action exposed |
+| Hardware macros | 16 slots, editor and repeat modes | disabled; no compatible format confirmed |
+| Polling | 125/250/500/1000 Hz | 125/250/500/1000 Hz |
+| Lighting | color, known modes, brightness, battery gauge | per-profile color/mode/brightness/speed |
+| Raw reports | 17-byte diagnostic tab | disabled to prevent cross-protocol packets |
+
+Generic binary branches without matching model evidence remain hidden. In
+particular, Areson type `09`, its extra reserved DPI records, and the generic
+“stream” lighting branch are not surfaced merely because code exists in the
+shared vendor utility.
 
 ## Remaining unknowns
 

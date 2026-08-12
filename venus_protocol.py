@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import secrets
 import sys
 import threading
@@ -399,13 +400,22 @@ ASCII_TO_HID = {
     '&': (0x24, MODIFIER_SHIFT), '*': (0x25, MODIFIER_SHIFT), '(': (0x26, MODIFIER_SHIFT),
     ')': (0x27, MODIFIER_SHIFT),
     ' ': (0x2C, 0), '.': (0x37, 0), ',': (0x36, 0), '?': (0x38, MODIFIER_SHIFT),
+    '<': (0x36, MODIFIER_SHIFT), '>': (0x37, MODIFIER_SHIFT),
     '/': (0x38, 0), ';': (0x33, 0), ':': (0x33, MODIFIER_SHIFT), "'": (0x34, 0),
     '"': (0x34, MODIFIER_SHIFT), '[': (0x2F, 0), '{': (0x2F, MODIFIER_SHIFT),
     ']': (0x30, 0), '}': (0x30, MODIFIER_SHIFT), '\\': (0x31, 0), '|': (0x31, MODIFIER_SHIFT),
     '-': (0x2D, 0), '_': (0x2D, MODIFIER_SHIFT), '=': (0x2E, 0), '+': (0x2E, MODIFIER_SHIFT),
     '`': (0x35, 0), '~': (0x35, MODIFIER_SHIFT),
-    '\n': (0x28, 0), # Enter
+    '\n': (0x28, 0), '\r': (0x28, 0), '\t': (0x2B, 0),
 }
+
+ASCII_FROM_HID: dict[tuple[int, bool], str] = {}
+for _character, (_usage, _modifier) in ASCII_TO_HID.items():
+    # Prefer newline to its carriage-return alias in text previews.
+    if _character == '\r':
+        continue
+    ASCII_FROM_HID.setdefault(
+        (_usage, bool(_modifier & MODIFIER_SHIFT)), _character)
 
 
 
@@ -418,6 +428,8 @@ MACRO_REPEAT_TOGGLE = 0xFF   # Toggle on/off
 MACRO_SLOT_SIZE = 0x180
 MACRO_HEADER_SIZE = 0x20
 MACRO_TERMINATOR_SIZE = 4
+MACRO_SHIFT_CODE = 0x20
+MACRO_MIN_DELAY_MS = 3
 MACRO_MAX_EVENTS = (
     MACRO_SLOT_SIZE - MACRO_HEADER_SIZE - MACRO_TERMINATOR_SIZE
 ) // 5
@@ -825,6 +837,105 @@ class MacroEvent:
         return bytes([status, self.keycode, 0x00, (self.delay_ms >> 8) & 0xFF, self.delay_ms & 0xFF])
 
 
+def text_macro_requirements(text: str) -> tuple[int, tuple[str, ...]]:
+    """Return the event count and unsupported characters for US-layout text."""
+    event_count = 0
+    unsupported: list[str] = []
+    for character in text:
+        mapping = ASCII_TO_HID.get(character)
+        if mapping is None:
+            if character not in unsupported:
+                unsupported.append(character)
+            continue
+        _, modifier = mapping
+        event_count += 4 if modifier & MODIFIER_SHIFT else 2
+    return event_count, tuple(unsupported)
+
+
+def build_text_macro_events(
+    text: str,
+    *,
+    key_hold_ms: int = 35,
+    delay_min_ms: int = 80,
+    delay_max_ms: int | None = None,
+    extra_word_pause_ms: int = 0,
+    rng=None,
+) -> list[MacroEvent]:
+    """Build a natural press/release stream for a US-layout text macro.
+
+    ``delay_min_ms``/``delay_max_ms`` control the time from one key's release
+    to the next key.  Equal values produce fixed timing; a range produces a
+    fresh random delay for each character.  Shifted characters use the exact
+    modifier code and event order emitted by the vendor converter.
+    """
+    delay_max_ms = delay_min_ms if delay_max_ms is None else delay_max_ms
+    for label, value, minimum in (
+        ("key hold", key_hold_ms, MACRO_MIN_DELAY_MS),
+        ("minimum inter-key delay", delay_min_ms, MACRO_MIN_DELAY_MS),
+        ("maximum inter-key delay", delay_max_ms, MACRO_MIN_DELAY_MS),
+        ("extra word pause", extra_word_pause_ms, 0),
+    ):
+        if not minimum <= value <= 0xFFFF:
+            raise ValueError(f"{label} must be {minimum}..65535 ms")
+    if delay_min_ms > delay_max_ms:
+        raise ValueError("minimum inter-key delay cannot exceed maximum")
+    if delay_max_ms + extra_word_pause_ms > 0xFFFF:
+        raise ValueError("inter-key delay plus word pause exceeds 65535 ms")
+
+    required, unsupported = text_macro_requirements(text)
+    if unsupported:
+        display = ", ".join(repr(character) for character in unsupported)
+        raise ValueError(f"unsupported text character(s): {display}")
+    if required > MACRO_MAX_EVENTS:
+        raise ValueError(
+            f"text needs {required} events; a macro slot holds "
+            f"{MACRO_MAX_EVENTS}")
+
+    random_source = rng if rng is not None else random.SystemRandom()
+    events: list[MacroEvent] = []
+    last_index = len(text) - 1
+    for index, character in enumerate(text):
+        keycode, modifier = ASCII_TO_HID[character]
+        if index == last_index:
+            inter_key_delay = MACRO_MIN_DELAY_MS
+        else:
+            inter_key_delay = random_source.randint(
+                delay_min_ms, delay_max_ms)
+            if character in (" ", "\n", "\r", "\t"):
+                inter_key_delay += extra_word_pause_ms
+
+        if modifier & MODIFIER_SHIFT:
+            events.extend((
+                MacroEvent(MACRO_SHIFT_CODE, True, MACRO_MIN_DELAY_MS,
+                           True, "modifier"),
+                MacroEvent(keycode, True, key_hold_ms),
+                MacroEvent(MACRO_SHIFT_CODE, False, MACRO_MIN_DELAY_MS,
+                           True, "modifier"),
+                MacroEvent(keycode, False, inter_key_delay),
+            ))
+        else:
+            events.extend((
+                MacroEvent(keycode, True, key_hold_ms),
+                MacroEvent(keycode, False, inter_key_delay),
+            ))
+    return events
+
+
+def macro_events_to_text(events: Iterable[MacroEvent]) -> str:
+    """Best-effort text preview for keyboard events in a hardware macro."""
+    shift_active = False
+    characters: list[str] = []
+    for event in events:
+        event_type = "modifier" if event.is_modifier else event.event_type
+        if event_type == "modifier" and event.keycode == MACRO_SHIFT_CODE:
+            shift_active = event.is_down
+        elif event_type == "keyboard" and event.is_down:
+            character = ASCII_FROM_HID.get((event.keycode, shift_active))
+            if character is not None:
+                characters.append(character)
+    return "".join(characters)
+
+
 def build_macro_image(name: str, events: Iterable[MacroEvent]) -> bytes:
     """Serialize one complete, unpadded 0x180-byte-slot macro image.
 
@@ -926,6 +1037,13 @@ def build_dpi(slot_index: int, value: int, tweak: int) -> bytes:
     offset = 0x0C + (slot_index * 4)
     return build_memory_write(offset, bytes((value & 0xFF, value & 0xFF,
                                              0x00, tweak & 0xFF)))
+
+
+def build_dpi_stage_count(count: int) -> bytes:
+    """Build the confirmed enabled-DPI-stage count record at ``0x0002``."""
+    if not 1 <= count <= 8:
+        raise ValueError("Areson DPI stage count must be 1..8")
+    return build_memory_write(0x0002, bytes((count, calc_checksum((count,)))))
 
 
 @dataclass(frozen=True)

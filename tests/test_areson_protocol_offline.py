@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import unittest
 from unittest import mock
 
@@ -111,6 +112,14 @@ class ProtocolBuilderTests(unittest.TestCase):
             self.assertEqual(vp.POLLING_RATE_PAYLOADS[rate][4:6],
                              bytes((code, (0x55 - code) & 0xFF)))
 
+    def test_dpi_stage_count_record(self):
+        packet = vp.build_dpi_stage_count(5)
+        self.assertEqual(packet[3:6], bytes((0x00, 0x02, 0x02)))
+        self.assertEqual(packet[6:8], bytes((0x05, 0x50)))
+        self.assertTrue(vp.report_checksum_valid(packet))
+        with self.assertRaisesRegex(ValueError, "1..8"):
+            vp.build_dpi_stage_count(0)
+
     def test_battery_led_gradient_uses_captured_minimum_brightness(self):
         self.assertEqual(vp.battery_gradient_rgb(0), (255, 0, 0))
         self.assertEqual(vp.battery_gradient_rgb(25), (255, 128, 0))
@@ -137,6 +146,48 @@ class ProtocolBuilderTests(unittest.TestCase):
         header = bytes(31) + b"\x02"
         checksum = vp.calculate_terminator_checksum(header + events, 2)
         self.assertEqual((2 + sum(events) + checksum) & 0xFF, 0x55)
+
+    def test_text_macro_uses_captured_shift_order_and_timing(self):
+        self.assertEqual(vp.text_macro_requirements("aA!"), (10, ()))
+        events = vp.build_text_macro_events(
+            "aA!", key_hold_ms=35, delay_min_ms=80)
+
+        self.assertEqual(len(events), 10)
+        self.assertEqual(
+            [event.to_bytes().hex() for event in events],
+            [
+                "8104000023", "4104000050",
+                "8020000003", "8104000023",
+                "4020000003", "4104000050",
+                "8020000003", "811e000023",
+                "4020000003", "411e000003",
+            ],
+        )
+        self.assertEqual(vp.macro_events_to_text(events), "aA!")
+
+    def test_text_macro_random_delays_are_bounded_and_repeatable(self):
+        first = vp.build_text_macro_events(
+            "a b", delay_min_ms=70, delay_max_ms=90,
+            extra_word_pause_ms=50, rng=random.Random(7))
+        second = vp.build_text_macro_events(
+            "a b", delay_min_ms=70, delay_max_ms=90,
+            extra_word_pause_ms=50, rng=random.Random(7))
+
+        self.assertEqual(first, second)
+        release_delays = [first[index].delay_ms for index in (1, 3, 5)]
+        self.assertTrue(70 <= release_delays[0] <= 90)
+        self.assertTrue(120 <= release_delays[1] <= 140)
+        self.assertEqual(release_delays[2], vp.MACRO_MIN_DELAY_MS)
+
+    def test_text_macro_rejects_unsupported_and_oversized_text(self):
+        self.assertEqual(
+            vp.text_macro_requirements("a\N{SNOWMAN}a"),
+            (4, ("\N{SNOWMAN}",)),
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            vp.build_text_macro_events("snow \N{SNOWMAN}")
+        with self.assertRaisesRegex(ValueError, "70 events"):
+            vp.build_text_macro_events("a" * 35)
 
     def test_macro_slot_addresses_use_0x180_stride(self):
         self.assertEqual(vp.get_macro_slot_info(0), (0x03, 0x00))

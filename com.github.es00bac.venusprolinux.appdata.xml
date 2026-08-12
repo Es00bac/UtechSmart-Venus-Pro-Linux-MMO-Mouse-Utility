@@ -4,21 +4,22 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Venus Pro Config</name>
-  <summary>Configuration utility for UtechSmart Venus Pro MMO Mouse</summary>
+  <summary>Configure supported UtechSmart Venus MMO mice</summary>
   <description>
     <p>
-      Venus Pro Config is a powerful Linux utility for configuring the UtechSmart Venus Pro MMO Gaming Mouse.
-      It works with both the Wireless (Pro) and Wired versions of the mouse.
+      Venus Pro Config is a Linux utility for configuring supported UtechSmart Venus MMO mice.
+      It supports the wireless receiver, wired Areson model, and the separately detected Holtek controller.
     </p>
     <p>Features include:</p>
     <ul>
-      <li>Full button remapping for all 16 buttons</li>
-      <li>Macro recording and management</li>
-      <li>Native mouse-button events in hardware macros</li>
+      <li>Controller-aware remapping for 16 Areson or 19 Holtek controls</li>
+      <li>Hardware macro recording, reordering, and slot management</li>
+      <li>Text macros with fixed or randomized key timing</li>
+      <li>Native left, right, middle, back, and forward mouse events in macros</li>
       <li>Battery and cable status in the desktop tray</li>
       <li>Minimum-brightness battery-color mouse LED mode</li>
       <li>RGB lighting configuration (Neon, Breathing, Steady)</li>
-      <li>DPI profile settings (up to 16000 DPI)</li>
+      <li>Controller-aware DPI stages and profile settings</li>
       <li>Polling rate adjustment (125Hz - 1000Hz)</li>
       <li>Profile management (save/load configurations)</li>
     </ul>
@@ -35,7 +36,15 @@
     </screenshot>
     <screenshot>
       <image>https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/Macros.png</image>
-      <caption>Macro Editor</caption>
+      <caption>Text macro editor with fixed and randomized timing</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/MacroManual.png</image>
+      <caption>Manual keyboard and mouse macro events</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/HoltekButtons.png</image>
+      <caption>Controller-aware Holtek button assignments</caption>
     </screenshot>
   </screenshots>
   <url type="homepage">https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility</url>
