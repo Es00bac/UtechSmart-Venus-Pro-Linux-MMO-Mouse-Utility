@@ -25,8 +25,7 @@ jobs:
       - name: Build Debian and Ubuntu package
         run: |
           VERSION="${RELEASE_VERSION#v}"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq dpkg-dev
+          command -v dpkg-deb
           bash packaging/deb/build-deb.sh "$VERSION"
       - name: Verify Debian dependencies and imports
         run: |
