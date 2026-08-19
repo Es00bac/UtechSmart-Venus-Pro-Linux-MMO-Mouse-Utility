@@ -22,7 +22,7 @@ Download the package for your distribution from the
 | Fedora 43+ | `.rpm` | `sudo dnf install ./venusprolinux-*.rpm` | `python3`, `python3-pyqt6`, `python3-hidapi` |
 | Arch Linux | `.pkg.tar.zst` | `sudo pacman -U ./venusprolinux-*.pkg.tar.zst` | `python`, `python-pyqt6`, `python-hidapi` |
 | Cross-distribution | `.flatpak` | `flatpak install --user ./VenusProLinux-*.flatpak` | Bundled in the Flatpak |
-| Cross-distribution x86_64 | `.AppImage` | `chmod +x ./VenusProLinux-*.AppImage && ./VenusProLinux-*.AppImage` | Python, PyQt6, and hidapi bundled; system `libGL` |
+| Cross-distribution x86_64 | `.AppImage` | `chmod +x ./VenusProLinux-*.AppImage && ./VenusProLinux-*.AppImage` | Python, PyQt6, and hidapi bundled; system `libGL`/`libEGL` |
 
 The native packages install the udev access rule automatically. Flatpak and
 AppImage cannot install host udev rules. Download and install the reviewed

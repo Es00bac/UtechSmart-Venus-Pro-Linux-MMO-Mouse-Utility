@@ -16,6 +16,9 @@ finish-args:
 modules:
   - name: venusprolinux
     buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
     build-commands:
       - python3 -m pip install --no-cache-dir --prefix=/app PyQt6==6.11.0 PyQt6-Qt6==6.11.1 PyQt6-sip==13.12.0 hidapi==0.15.0
       - install -d /app/share/venusprolinux /app/bin /app/share/applications /app/share/icons/hicolor/1024x1024/apps /app/share/metainfo
