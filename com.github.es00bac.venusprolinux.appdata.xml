@@ -24,7 +24,7 @@
       <li>Profile management (save/load configurations)</li>
     </ul>
   </description>
-  <launchable type="desktop-id">venusprolinux.desktop</launchable>
+  <launchable type="desktop-id">com.github.es00bac.venusprolinux.desktop</launchable>
   <screenshots>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/Buttons.png</image>
@@ -52,6 +52,9 @@
   <developer id="io.github.es00bac">
     <name>Es00bac</name>
   </developer>
+  <releases>
+    <release version="0.3.0" date="2026-08-19" />
+  </releases>
   <content_rating type="oars-1.1" />
   <update_contact>cabewse_at_gmail.com</update_contact>
 </component>

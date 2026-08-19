@@ -11,6 +11,35 @@ It gives Linux users a practical way to manage bindings, macros, DPI profiles, p
 
 ## Quickstart
 
+### Release packages
+
+Download the package for your distribution from the
+[latest GitHub release](https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/releases/latest):
+
+| Distribution | Artifact | Install command | Runtime dependencies |
+|---|---|---|---|
+| Debian 12+/Ubuntu 24.04+ | `.deb` | `sudo apt install ./venusprolinux_*_all.deb` | `python3`, `python3-pyqt6`, `python3-hid` |
+| Fedora 43+ | `.rpm` | `sudo dnf install ./venusprolinux-*.rpm` | `python3`, `python3-pyqt6`, `python3-hidapi` |
+| Arch Linux | `.pkg.tar.zst` | `sudo pacman -U ./venusprolinux-*.pkg.tar.zst` | `python`, `python-pyqt6`, `python-hidapi` |
+| Cross-distribution | `.flatpak` | `flatpak install --user ./VenusProLinux-*.flatpak` | Bundled in the Flatpak |
+| Cross-distribution x86_64 | `.AppImage` | `chmod +x ./VenusProLinux-*.AppImage && ./VenusProLinux-*.AppImage` | Python, PyQt6, and hidapi bundled; system `libGL` |
+
+The native packages install the udev access rule automatically. Flatpak and
+AppImage cannot install host udev rules. Download and install the reviewed
+v0.3.0 rule once, then reconnect the mouse or receiver:
+
+```bash
+curl -LO https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/v0.3.0/packaging/linux/99-venus-pro.rules
+sudo install -Dm644 99-venus-pro.rules /etc/udev/rules.d/99-venus-pro.rules
+sudo udevadm control --reload-rules
+```
+
+Run the Flatpak with:
+
+```bash
+flatpak run com.github.es00bac.venusprolinux
+```
+
 ### Arch Linux (AUR)
 
 ```bash

@@ -2,7 +2,7 @@
 Name=Venus Pro Config
 Comment=UtechSmart Venus Pro MMO Mouse Configuration Utility
 Exec=venusprolinux
-Icon=venusprolinux
+Icon=com.github.es00bac.venusprolinux
 Terminal=false
 Type=Application
 Categories=Settings;HardwareSettings;

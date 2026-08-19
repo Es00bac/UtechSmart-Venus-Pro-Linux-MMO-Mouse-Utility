@@ -1,73 +1,66 @@
+%{!?venus_version:%global venus_version 0.3.0}
+%global app_id com.github.es00bac.venusprolinux
+
 Name:           venusprolinux
-Version:        1.0.0
+Version:        %{venus_version}
 Release:        1%{?dist}
-Summary:        Linux configuration utility for UtechSmart Venus Pro MMO mouse
+Summary:        Configuration utility for UtechSmart Venus MMO mice
 
 License:        MIT
 URL:            https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
 Source0:        %{name}-%{version}.tar.gz
-
 BuildArch:      noarch
+
+# Fedora package names, verified against the Fedora repositories. The
+# python3-hidapi package supplies the imported `hid` extension module.
 Requires:       python3 >= 3.10
 Requires:       python3-hidapi
-Requires:       python3-qt6
-Recommends:     python3-evdev
+Requires:       python3-pyqt6
 
 %description
-A configuration utility for supported UtechSmart Venus MMO mice on Linux.
-Features controller-aware button remapping, text and mouse-event macros,
-RGB lighting, DPI profiles, and battery monitoring.
+Configure supported UtechSmart Venus MMO mice on Linux. Features include
+button remapping, hardware macros, RGB lighting, DPI profiles, polling rate,
+and battery monitoring.
 
 %prep
-%setup -q
+%autosetup
+
+%build
 
 %install
-mkdir -p %{buildroot}/usr/bin
-mkdir -p %{buildroot}/usr/share/venusprolinux
-mkdir -p %{buildroot}/usr/share/applications
-mkdir -p %{buildroot}/usr/share/icons/hicolor/512x512/apps
-mkdir -p %{buildroot}/usr/share/doc/%{name}
-mkdir -p %{buildroot}/usr/share/metainfo
-mkdir -p %{buildroot}/usr/lib/udev/rules.d
+install -d \
+    %{buildroot}%{_bindir} \
+    %{buildroot}%{_datadir}/%{name} \
+    %{buildroot}%{_datadir}/applications \
+    %{buildroot}%{_datadir}/icons/hicolor/1024x1024/apps \
+    %{buildroot}%{_metainfodir} \
+    %{buildroot}%{_udevrulesdir}
 
-install -m 755 venus_gui.py %{buildroot}/usr/share/venusprolinux/
-install -m 644 venus_protocol.py %{buildroot}/usr/share/venusprolinux/
-install -m 644 holtek_protocol.py %{buildroot}/usr/share/venusprolinux/
-install -m 644 device_driver.py %{buildroot}/usr/share/venusprolinux/
-install -m 644 staging_manager.py %{buildroot}/usr/share/venusprolinux/
-install -m 644 transaction_controller.py %{buildroot}/usr/share/venusprolinux/
-install -m 644 mouseimg.png %{buildroot}/usr/share/venusprolinux/
-
-install -m 644 icon.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/venusprolinux.png
-install -m 644 venusprolinux.desktop %{buildroot}/usr/share/applications/
-install -m 644 com.github.es00bac.venusprolinux.appdata.xml %{buildroot}/usr/share/metainfo/
-install -m 644 99-venus-pro.rules %{buildroot}/usr/lib/udev/rules.d/
-
-install -m 644 README.md %{buildroot}/usr/share/doc/%{name}/
-install -m 644 PROTOCOL.md %{buildroot}/usr/share/doc/%{name}/
-install -m 644 MACRO_EDITOR.md %{buildroot}/usr/share/doc/%{name}/
-install -m 644 LICENSE %{buildroot}/usr/share/doc/%{name}/
-
-cat > %{buildroot}/usr/bin/venusprolinux << 'EOF'
-#!/usr/bin/env python3
-import os
-import sys
-os.execv(sys.executable, [sys.executable, "/usr/share/venusprolinux/venus_gui.py"] + sys.argv[1:])
-EOF
-chmod 755 %{buildroot}/usr/bin/venusprolinux
+install -m644 \
+    venus_gui.py venus_protocol.py holtek_protocol.py device_driver.py \
+    staging_manager.py transaction_controller.py mouseimg.png icon.png \
+    %{buildroot}%{_datadir}/%{name}/
+install -m755 packaging/linux/venusprolinux \
+    %{buildroot}%{_bindir}/venusprolinux
+install -m644 packaging/linux/%{app_id}.desktop \
+    %{buildroot}%{_datadir}/applications/%{app_id}.desktop
+install -m644 icon.png \
+    %{buildroot}%{_datadir}/icons/hicolor/1024x1024/apps/%{app_id}.png
+install -m644 %{app_id}.appdata.xml \
+    %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xml
+install -m644 packaging/linux/99-venus-pro.rules \
+    %{buildroot}%{_udevrulesdir}/99-venus-pro.rules
 
 %files
-/usr/bin/venusprolinux
-/usr/share/venusprolinux/
-/usr/share/applications/venusprolinux.desktop
-/usr/share/icons/hicolor/512x512/apps/venusprolinux.png
-/usr/share/metainfo/com.github.es00bac.venusprolinux.appdata.xml
-/usr/lib/udev/rules.d/99-venus-pro.rules
-%doc /usr/share/doc/%{name}/
-
-%post
-gtk-update-icon-cache -f /usr/share/icons/hicolor/ 2>/dev/null || true
+%license LICENSE
+%doc README.md PROTOCOL.md docs/MACRO_EDITOR.md
+%{_bindir}/venusprolinux
+%{_datadir}/%{name}/
+%{_datadir}/applications/%{app_id}.desktop
+%{_datadir}/icons/hicolor/1024x1024/apps/%{app_id}.png
+%{_metainfodir}/%{app_id}.metainfo.xml
+%{_udevrulesdir}/99-venus-pro.rules
 
 %changelog
-* Sun Jan 11 2026 Es00bac <es00bac@github.com> - 1.0.0-1
-- Initial release
+* Wed Aug 19 2026 Es00bac <es00bac@github.com> - 0.3.0-1
+- Add controller-aware configuration, expanded macros, and release packaging.

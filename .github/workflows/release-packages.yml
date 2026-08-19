@@ -1,0 +1,149 @@
+name: Build release packages
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without the leading v
+        required: true
+        default: 0.3.0
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Debian and Ubuntu package
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev
+          bash packaging/deb/build-deb.sh "$VERSION"
+      - name: Verify Debian dependencies and imports
+        run: |
+          docker run --rm -v "$PWD/dist:/packages:ro" debian:13-slim sh -lc '
+            apt-get update -qq &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /packages/*.deb &&
+            python3 -c "import hid; from PyQt6 import QtCore, QtGui, QtWidgets"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+
+  rpm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify Fedora RPM
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          mkdir -p dist
+          docker run --rm -v "$PWD:/src" -w /src fedora:43 bash -lc "
+            dnf install -y -q rpm-build redhat-rpm-config systemd-rpm-macros tar gzip &&
+            bash packaging/rpm/build-rpm.sh '$VERSION' &&
+            dnf install -y -q /src/dist/*.rpm &&
+            python3 -c 'import hid; from PyQt6 import QtCore, QtGui, QtWidgets'"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: dist/*.rpm
+
+  arch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify Arch package
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          mkdir -p dist
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist:/out" archlinux:latest bash -lc "
+            pacman -Syu --noconfirm --needed base-devel python python-hidapi python-pyqt6 &&
+            useradd -m builder && chown builder:builder /out &&
+            su builder -c \"DIST_DIR=/out bash /src/packaging/arch/build-arch.sh '$VERSION'\" &&
+            pacman -U --noconfirm /out/*.pkg.tar.zst &&
+            python -c 'import hid; from PyQt6 import QtCore, QtGui, QtWidgets'"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: dist/*.pkg.tar.zst
+
+  appimage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build self-contained AppImage
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          bash packaging/appimage/build-appimage.sh "$VERSION"
+      - name: Smoke-test AppImage without host Python or Qt packages
+        run: |
+          docker run --rm -v "$PWD/dist:/packages:ro" debian:13-slim sh -lc '
+            apt-get update -qq && apt-get install -y -qq libgl1 >/dev/null &&
+            chmod +x /packages/*.AppImage
+            set +e
+            QT_QPA_PLATFORM=offscreen APPIMAGE_EXTRACT_AND_RUN=1 timeout 8 /packages/*.AppImage
+            status=$?
+            test "$status" -eq 0 -o "$status" -eq 124'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: dist/*.AppImage
+
+  flatpak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Flatpak bundle
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          bash packaging/flatpak/build-flatpak.sh "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*.flatpak
+
+  portable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build generic Linux payload
+        run: |
+          VERSION="${RELEASE_VERSION#v}"
+          bash packaging/portable/build-tarball.sh "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable
+          path: dist/*.tar.gz
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [deb, rpm, arch, appimage, flatpak, portable]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+      - name: Create release and upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --generate-notes --title "Venus Pro Linux $GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
