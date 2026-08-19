@@ -31,7 +31,7 @@ flatpak install --user --noninteractive -y flathub \
 
 BUILD_ROOT="$(mktemp -d -t venusprolinux-flatpak.XXXXXX)"
 trap 'rm -rf "${BUILD_ROOT}"' EXIT
-flatpak-builder --user --force-clean \
+flatpak-builder --user --force-clean --state-dir="${BUILD_ROOT}/state" \
     --install-deps-from=flathub --repo="${BUILD_ROOT}/repo" \
     "${BUILD_ROOT}/build" \
     "${SCRIPT_DIR}/${VENUS_APP_ID}.yml"
