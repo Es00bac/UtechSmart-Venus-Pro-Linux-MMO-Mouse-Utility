@@ -88,7 +88,6 @@ jobs:
         run: |
           docker run --rm -v "$PWD/dist:/packages:ro" debian:13-slim sh -lc '
             apt-get update -qq && apt-get install -y -qq libgl1 >/dev/null &&
-            chmod +x /packages/*.AppImage
             set +e
             QT_QPA_PLATFORM=offscreen APPIMAGE_EXTRACT_AND_RUN=1 timeout 8 /packages/*.AppImage
             status=$?
