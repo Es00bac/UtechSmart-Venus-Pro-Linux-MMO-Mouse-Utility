@@ -14,3 +14,9 @@ AGENTS.md
 pkg/
 src/
 *.pkg.tar*
+/dist/
+/build/
+*.AppImage
+*.flatpak
+*.deb
+*.rpm

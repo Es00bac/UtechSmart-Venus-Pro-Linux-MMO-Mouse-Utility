@@ -1,90 +1,85 @@
-#!/bin/bash
-# Build AppImage for Venus Pro Linux utility
-set -e
+#!/usr/bin/env bash
+# Build a self-contained x86_64 AppImage with Python, PyQt6, and hidapi bundled.
+set -euo pipefail
 
-VERSION="0.2.1"
-APP_NAME="VenusProLinux"
-SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-APP_DIR="/tmp/${APP_NAME}.AppDir"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../lib.sh
+source "${SCRIPT_DIR}/../lib.sh"
 
-echo "Building AppImage for ${APP_NAME} v${VERSION}..."
+VERSION="$(venus_resolve_version "${1:-}")"
+venus_prepare_dist
 
-# Download appimagetool if not present
-if [ ! -f "/tmp/appimagetool" ]; then
-    echo "Downloading appimagetool..."
-    wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O /tmp/appimagetool
-    chmod +x /tmp/appimagetool
+if [[ "${2:-}" != "--inside-container" ]]; then
+    command -v docker >/dev/null || {
+        echo "Docker is required to build the compatibility AppImage." >&2
+        exit 1
+    }
+    docker run --rm \
+        -v "${VENUS_REPO_ROOT}:/src" -w /src ubuntu:22.04 \
+        bash packaging/appimage/build-appimage.sh "${VERSION}" --inside-container
+    exit
 fi
 
-# Clean and create AppDir structure
-rm -rf "${APP_DIR}"
-mkdir -p "${APP_DIR}/usr/bin"
-mkdir -p "${APP_DIR}/usr/share/venusprolinux"
-mkdir -p "${APP_DIR}/usr/share/icons/hicolor/512x512/apps"
-mkdir -p "${APP_DIR}/usr/share/metainfo"
-mkdir -p "${APP_DIR}/usr/share/applications"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq \
+    ca-certificates file libdbus-1-3 libegl1 libfontconfig1 libfreetype6 \
+    libfuse2 libgl1 libglib2.0-0 libudev1 libx11-6 libxcb-cursor0 \
+    libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb1 \
+    libxkbcommon-x11-0 libxkbcommon0 \
+    python3 python3-pip wget >/dev/null
+python3 -m pip install --disable-pip-version-check --no-cache-dir \
+    'PyInstaller==6.22.2' 'PyQt6==6.11.0' 'PyQt6-Qt6==6.11.1' \
+    'PyQt6-sip==13.12.0' 'hidapi==0.15.0'
 
-# Copy application files
-cp "${SCRIPT_DIR}/venus_gui.py" "${APP_DIR}/usr/share/venusprolinux/"
-cp "${SCRIPT_DIR}/venus_protocol.py" "${APP_DIR}/usr/share/venusprolinux/"
-cp "${SCRIPT_DIR}/holtek_protocol.py" "${APP_DIR}/usr/share/venusprolinux/"
-cp "${SCRIPT_DIR}/device_driver.py" "${APP_DIR}/usr/share/venusprolinux/"
-cp "${SCRIPT_DIR}/staging_manager.py" "${APP_DIR}/usr/share/venusprolinux/"
-cp "${SCRIPT_DIR}/transaction_controller.py" "${APP_DIR}/usr/share/venusprolinux/"
-cp "${SCRIPT_DIR}/mouseimg.png" "${APP_DIR}/usr/share/venusprolinux/"
-cp "${SCRIPT_DIR}/com.github.es00bac.venusprolinux.appdata.xml" "${APP_DIR}/usr/share/metainfo/"
+BUILD_ROOT="$(mktemp -d -t venusprolinux-appimage.XXXXXX)"
+APPDIR="${BUILD_ROOT}/VenusProLinux.AppDir"
+trap 'rm -rf "${BUILD_ROOT}"' EXIT
 
-# Copy icon
-cp "${SCRIPT_DIR}/icon.png" "${APP_DIR}/usr/share/icons/hicolor/512x512/apps/venusprolinux.png"
-cp "${SCRIPT_DIR}/icon.png" "${APP_DIR}/venusprolinux.png"
+python3 -m PyInstaller --noconfirm --clean --onedir --windowed \
+    --distpath "${BUILD_ROOT}/pyinstaller-dist" \
+    --workpath "${BUILD_ROOT}/pyinstaller-build" \
+    --specpath "${BUILD_ROOT}" \
+    --name venusprolinux \
+    --add-data "${VENUS_REPO_ROOT}/icon.png:." \
+    --add-data "${VENUS_REPO_ROOT}/mouseimg.png:." \
+    venus_gui.py
 
-# Create launcher script
-cat > "${APP_DIR}/usr/bin/venusprolinux" << 'EOF'
-#!/usr/bin/env python3
-import os
-import sys
+install -d "${APPDIR}/usr/lib" "${APPDIR}/usr/bin" \
+    "${APPDIR}/usr/share/applications" \
+    "${APPDIR}/usr/share/icons/hicolor/1024x1024/apps" \
+    "${APPDIR}/usr/share/metainfo"
+cp -a "${BUILD_ROOT}/pyinstaller-dist/venusprolinux" \
+    "${APPDIR}/usr/lib/venusprolinux"
 
-# Add the app directory to path
-app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(app_dir, "share", "venusprolinux"))
-
-# Run the GUI
-exec(open(os.path.join(app_dir, "share", "venusprolinux", "venus_gui.py")).read())
+cat > "${APPDIR}/AppRun" <<'EOF'
+#!/bin/sh
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "${HERE}/usr/lib/venusprolinux/venusprolinux" "$@"
 EOF
-chmod 755 "${APP_DIR}/usr/bin/venusprolinux"
+chmod 755 "${APPDIR}/AppRun"
+ln -s ../lib/venusprolinux/venusprolinux "${APPDIR}/usr/bin/venusprolinux"
 
-# Create AppRun script
-cat > "${APP_DIR}/AppRun" << 'EOF'
-#!/bin/bash
-SELF=$(readlink -f "$0")
-HERE=${SELF%/*}
-export PATH="${HERE}/usr/bin:${PATH}"
-export PYTHONPATH="${HERE}/usr/share/venusprolinux:${PYTHONPATH}"
-exec python3 "${HERE}/usr/share/venusprolinux/venus_gui.py" "$@"
-EOF
-chmod 755 "${APP_DIR}/AppRun"
+install -m644 "packaging/linux/${VENUS_APP_ID}.desktop" \
+    "${APPDIR}/${VENUS_APP_ID}.desktop"
+install -m644 "packaging/linux/${VENUS_APP_ID}.desktop" \
+    "${APPDIR}/usr/share/applications/${VENUS_APP_ID}.desktop"
+install -m644 icon.png "${APPDIR}/${VENUS_APP_ID}.png"
+install -m644 icon.png \
+    "${APPDIR}/usr/share/icons/hicolor/1024x1024/apps/${VENUS_APP_ID}.png"
+install -m644 "${VENUS_APP_ID}.appdata.xml" \
+    "${APPDIR}/usr/share/metainfo/${VENUS_APP_ID}.metainfo.xml"
+install -m644 "${VENUS_APP_ID}.appdata.xml" \
+    "${APPDIR}/usr/share/metainfo/${VENUS_APP_ID}.appdata.xml"
 
-# Create desktop file with proper ID in usr/share/applications
-cat > "${APP_DIR}/usr/share/applications/com.github.es00bac.venusprolinux.desktop" << EOF
-[Desktop Entry]
-Name=Venus Pro Config
-Comment=UtechSmart Venus Pro MMO Mouse Configuration Utility
-Exec=venusprolinux
-Icon=venusprolinux
-Terminal=false
-Type=Application
-Categories=Settings;HardwareSettings;
-EOF
+wget -q \
+    https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
+    -O "${BUILD_ROOT}/appimagetool"
+chmod 755 "${BUILD_ROOT}/appimagetool"
 
-# Copy desktop file to root for AppImage
-cp "${APP_DIR}/usr/share/applications/com.github.es00bac.venusprolinux.desktop" "${APP_DIR}/venusprolinux.desktop" # Keep simple one for root just in case
-
-
-# Build AppImage
-cd /tmp
-ARCH=x86_64 /tmp/appimagetool "${APP_DIR}" "${APP_NAME}-${VERSION}-x86_64.AppImage"
-
-# Move to packaging directory
-mv "/tmp/${APP_NAME}-${VERSION}-x86_64.AppImage" "${SCRIPT_DIR}/packaging/appimage/"
-
-echo "AppImage created: packaging/appimage/${APP_NAME}-${VERSION}-x86_64.AppImage"
+OUTPUT="${VENUS_DIST_DIR}/VenusProLinux-${VERSION}-x86_64.AppImage"
+unset SOURCE_DATE_EPOCH
+ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "${BUILD_ROOT}/appimagetool" \
+    "${APPDIR}" "${OUTPUT}"
+chmod 755 "${OUTPUT}"
+echo "Created ${OUTPUT}"

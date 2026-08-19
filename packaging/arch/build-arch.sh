@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Fedora-family RPM using Fedora's native Python dependency names.
+# Build a stable Arch package suitable for pacman -U.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -8,13 +8,11 @@ source "${SCRIPT_DIR}/../lib.sh"
 
 VERSION="$(venus_resolve_version "${1:-}")"
 venus_prepare_dist
-BUILD_ROOT="$(mktemp -d -t venusprolinux-rpm.XXXXXX)"
-TOPDIR="${BUILD_ROOT}/rpmbuild"
+BUILD_ROOT="$(mktemp -d -t venusprolinux-arch.XXXXXX)"
 SOURCE_DIR="${BUILD_ROOT}/${VENUS_PACKAGE_NAME}-${VERSION}"
 trap 'rm -rf "${BUILD_ROOT}"' EXIT
 
-mkdir -p "${TOPDIR}"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} \
-    "${SOURCE_DIR}/packaging/linux" "${SOURCE_DIR}/docs"
+mkdir -p "${SOURCE_DIR}/packaging/linux" "${SOURCE_DIR}/docs"
 install -m644 \
     "${VENUS_REPO_ROOT}/venus_gui.py" \
     "${VENUS_REPO_ROOT}/venus_protocol.py" \
@@ -37,11 +35,14 @@ install -m755 "${VENUS_REPO_ROOT}/packaging/linux/venusprolinux" \
     "${SOURCE_DIR}/packaging/linux/venusprolinux"
 
 tar -C "${BUILD_ROOT}" -czf \
-    "${TOPDIR}/SOURCES/${VENUS_PACKAGE_NAME}-${VERSION}.tar.gz" \
+    "${BUILD_ROOT}/${VENUS_PACKAGE_NAME}-${VERSION}.tar.gz" \
     "${VENUS_PACKAGE_NAME}-${VERSION}"
-install -m644 "${SCRIPT_DIR}/venusprolinux.spec" "${TOPDIR}/SPECS/"
+SOURCE_SHA256="$(sha256sum "${BUILD_ROOT}/${VENUS_PACKAGE_NAME}-${VERSION}.tar.gz" | cut -d' ' -f1)"
+sed -e "s/@VERSION@/${VERSION}/g" -e "s/@SHA256@/${SOURCE_SHA256}/g" \
+    "${SCRIPT_DIR}/PKGBUILD.release" > "${BUILD_ROOT}/PKGBUILD"
+install -m644 "${VENUS_REPO_ROOT}/venusprolinux.install" "${BUILD_ROOT}/"
 
-rpmbuild --define "_topdir ${TOPDIR}" --define "venus_version ${VERSION}" \
-    -bb "${TOPDIR}/SPECS/venusprolinux.spec"
-
-find "${TOPDIR}/RPMS" -type f -name '*.rpm' -exec cp -v {} "${VENUS_DIST_DIR}/" \;
+(
+    cd "${BUILD_ROOT}"
+    PKGDEST="${VENUS_DIST_DIR}" makepkg --clean --cleanbuild --force --nodeps --noconfirm
+)

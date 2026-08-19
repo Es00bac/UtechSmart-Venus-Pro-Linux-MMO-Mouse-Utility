@@ -17,7 +17,7 @@ links:
   - type: GitHub
     url: Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
   - type: Download
-    url: https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/raw/main/packaging/appimage/VenusProLinux-1.0.0-x86_64.AppImage
+    url: https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/releases/download/v0.3.0/VenusProLinux-0.3.0-x86_64.AppImage
 icons:
   - https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/main/icon.png
 screenshots:

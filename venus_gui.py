@@ -217,7 +217,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Identity for Taskbar
         app = QtWidgets.QApplication.instance()
         if app:
-            app.setDesktopFileName("venusprolinux")
+            app.setDesktopFileName("com.github.es00bac.venusprolinux")
 
         # Store device path instead of keeping device open (prevents blocking mouse input)
         self.device_path: bytes | str | None = None

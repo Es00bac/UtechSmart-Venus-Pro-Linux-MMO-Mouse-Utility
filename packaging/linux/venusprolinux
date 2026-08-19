@@ -1,2 +1,3 @@
 #!/bin/sh
-exec /usr/bin/python3 /usr/share/venusprolinux/venus_gui.py "$@"
+prefix="${VENUSPROLINUX_PREFIX:-/usr}"
+exec /usr/bin/python3 "${prefix}/share/venusprolinux/venus_gui.py" "$@"
