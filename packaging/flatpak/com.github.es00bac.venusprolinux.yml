@@ -10,7 +10,6 @@ finish-args:
   - --socket=wayland
   - --device=all
   - --talk-name=org.kde.StatusNotifierWatcher
-  - --own-name=org.kde.StatusNotifierItem-*
   - --env=VENUSPROLINUX_PREFIX=/app
 
 modules:
