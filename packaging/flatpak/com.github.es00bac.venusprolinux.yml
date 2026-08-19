@@ -21,11 +21,11 @@ modules:
         - --share=network
     build-commands:
       - python3 -m pip install --no-cache-dir --prefix=/app PyQt6==6.11.0 PyQt6-Qt6==6.11.1 PyQt6-sip==13.12.0 hidapi==0.15.0
-      - install -d /app/share/venusprolinux /app/bin /app/share/applications /app/share/icons/hicolor/1024x1024/apps /app/share/metainfo
+      - install -d /app/share/venusprolinux /app/bin /app/share/applications /app/share/icons/hicolor/256x256/apps /app/share/metainfo
       - install -m644 venus_gui.py venus_protocol.py holtek_protocol.py device_driver.py staging_manager.py transaction_controller.py mouseimg.png icon.png /app/share/venusprolinux/
       - install -m755 packaging/linux/venusprolinux /app/bin/venusprolinux
       - install -m644 packaging/linux/com.github.es00bac.venusprolinux.desktop /app/share/applications/com.github.es00bac.venusprolinux.desktop
-      - install -m644 icon.png /app/share/icons/hicolor/1024x1024/apps/com.github.es00bac.venusprolinux.png
+      - python3 -c "from PyQt6.QtCore import Qt; from PyQt6.QtGui import QImage; image = QImage('icon.png').scaled(256, 256, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation); assert image.save('/app/share/icons/hicolor/256x256/apps/com.github.es00bac.venusprolinux.png')"
       - install -m644 com.github.es00bac.venusprolinux.appdata.xml /app/share/metainfo/com.github.es00bac.venusprolinux.metainfo.xml
       - install -m644 packaging/linux/99-venus-pro.rules /app/share/venusprolinux/99-venus-pro.rules
       - install -m644 README.md PROTOCOL.md LICENSE /app/share/venusprolinux/
