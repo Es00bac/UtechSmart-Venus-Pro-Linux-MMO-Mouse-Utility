@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>support@sloom.studio</email>
+		<name>QindaQt contributors</name>
+	</maintainer>
+	<longdescription>
+		Venus Pro Config is a reverse-engineered Linux configuration utility
+		for the UtechSmart Venus Pro MMO mouse family: button remapping,
+		hardware macros, RGB lighting, DPI stages, polling rate and a battery
+		tray icon for the Areson (25a7:fa07/fa08) and Holtek (04d9:fc55)
+		controllers. Two interfaces share one protocol layer and are selected
+		at build time: the upstream Qt Widgets window and a dense QindaTK
+		(Qt Quick) window for the QindaQt desktop. The launcher prefers the
+		QindaTK interface when both are installed.
+	</longdescription>
+	<use>
+		<flag name="qindatk">Install the QindaTK (Qt Quick) interface built on <pkg>dev-libs/qindatk</pkg></flag>
+		<flag name="widgets">Install the upstream Qt Widgets interface</flag>
+		<flag name="usb">Enable the USB device reclaim action through <pkg>dev-python/pyusb</pkg></flag>
+	</use>
+	<upstream>
+		<remote-id type="github">Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility</remote-id>
+		<bugs-to>https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/issues</bugs-to>
+	</upstream>
+</pkgmetadata>

@@ -10,6 +10,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 import venus_protocol as vp
 import holtek_protocol as hp
+import venus_keys
 import device_driver as dd
 from staging_manager import StagingManager
 from transaction_controller import TransactionController
@@ -25,62 +26,12 @@ class KeyCaptureEdit(QtWidgets.QLineEdit):
 
     keyChanged = QtCore.pyqtSignal()
 
-    # Qt.Key → HID_KEY_USAGE name (regular keys)
-    _QT_TO_HID = {
-        **{getattr(QtCore.Qt.Key, f"Key_{chr(c)}"): chr(c)
-           for c in range(ord("A"), ord("Z") + 1)},
-        QtCore.Qt.Key.Key_1: "1", QtCore.Qt.Key.Key_2: "2",
-        QtCore.Qt.Key.Key_3: "3", QtCore.Qt.Key.Key_4: "4",
-        QtCore.Qt.Key.Key_5: "5", QtCore.Qt.Key.Key_6: "6",
-        QtCore.Qt.Key.Key_7: "7", QtCore.Qt.Key.Key_8: "8",
-        QtCore.Qt.Key.Key_9: "9", QtCore.Qt.Key.Key_0: "0",
-        QtCore.Qt.Key.Key_F1: "F1", QtCore.Qt.Key.Key_F2: "F2",
-        QtCore.Qt.Key.Key_F3: "F3", QtCore.Qt.Key.Key_F4: "F4",
-        QtCore.Qt.Key.Key_F5: "F5", QtCore.Qt.Key.Key_F6: "F6",
-        QtCore.Qt.Key.Key_F7: "F7", QtCore.Qt.Key.Key_F8: "F8",
-        QtCore.Qt.Key.Key_F9: "F9", QtCore.Qt.Key.Key_F10: "F10",
-        QtCore.Qt.Key.Key_F11: "F11", QtCore.Qt.Key.Key_F12: "F12",
-        QtCore.Qt.Key.Key_F13: "F13", QtCore.Qt.Key.Key_F14: "F14",
-        QtCore.Qt.Key.Key_F15: "F15", QtCore.Qt.Key.Key_F16: "F16",
-        QtCore.Qt.Key.Key_F17: "F17", QtCore.Qt.Key.Key_F18: "F18",
-        QtCore.Qt.Key.Key_F19: "F19", QtCore.Qt.Key.Key_F20: "F20",
-        QtCore.Qt.Key.Key_F21: "F21", QtCore.Qt.Key.Key_F22: "F22",
-        QtCore.Qt.Key.Key_F23: "F23", QtCore.Qt.Key.Key_F24: "F24",
-        QtCore.Qt.Key.Key_Return: "Enter", QtCore.Qt.Key.Key_Escape: "Escape",
-        QtCore.Qt.Key.Key_Backspace: "Backspace", QtCore.Qt.Key.Key_Tab: "Tab",
-        QtCore.Qt.Key.Key_Space: "Space",
-        QtCore.Qt.Key.Key_Minus: "-", QtCore.Qt.Key.Key_Equal: "=",
-        QtCore.Qt.Key.Key_BracketLeft: "[", QtCore.Qt.Key.Key_BracketRight: "]",
-        QtCore.Qt.Key.Key_Backslash: "\\", QtCore.Qt.Key.Key_Semicolon: ";",
-        QtCore.Qt.Key.Key_Apostrophe: "'", QtCore.Qt.Key.Key_QuoteLeft: "`",
-        QtCore.Qt.Key.Key_Comma: ",", QtCore.Qt.Key.Key_Period: ".",
-        QtCore.Qt.Key.Key_Slash: "/", QtCore.Qt.Key.Key_CapsLock: "CapsLock",
-        QtCore.Qt.Key.Key_Insert: "Insert", QtCore.Qt.Key.Key_Home: "Home",
-        QtCore.Qt.Key.Key_PageUp: "PageUp", QtCore.Qt.Key.Key_Delete: "Delete",
-        QtCore.Qt.Key.Key_End: "End", QtCore.Qt.Key.Key_PageDown: "PageDown",
-        QtCore.Qt.Key.Key_Right: "Right", QtCore.Qt.Key.Key_Left: "Left",
-        QtCore.Qt.Key.Key_Down: "Down", QtCore.Qt.Key.Key_Up: "Up",
-        QtCore.Qt.Key.Key_Print: "PrintScreen",
-        QtCore.Qt.Key.Key_ScrollLock: "ScrollLock",
-        QtCore.Qt.Key.Key_Pause: "Pause", QtCore.Qt.Key.Key_Menu: "Menu",
-        QtCore.Qt.Key.Key_NumLock: "NumLock",
-        # Modifier keys (standalone binding)
-        QtCore.Qt.Key.Key_Shift: "Left Shift", QtCore.Qt.Key.Key_Control: "Left Ctrl",
-        QtCore.Qt.Key.Key_Alt: "Left Alt", QtCore.Qt.Key.Key_Meta: "Left GUI",
-    }
-
-    # When KeypadModifier is active, override these keys → "Keypad X"
-    _KEYPAD_MAP = {
-        QtCore.Qt.Key.Key_0: "Keypad 0", QtCore.Qt.Key.Key_1: "Keypad 1",
-        QtCore.Qt.Key.Key_2: "Keypad 2", QtCore.Qt.Key.Key_3: "Keypad 3",
-        QtCore.Qt.Key.Key_4: "Keypad 4", QtCore.Qt.Key.Key_5: "Keypad 5",
-        QtCore.Qt.Key.Key_6: "Keypad 6", QtCore.Qt.Key.Key_7: "Keypad 7",
-        QtCore.Qt.Key.Key_8: "Keypad 8", QtCore.Qt.Key.Key_9: "Keypad 9",
-        QtCore.Qt.Key.Key_Slash: "Keypad /", QtCore.Qt.Key.Key_Asterisk: "Keypad *",
-        QtCore.Qt.Key.Key_Minus: "Keypad -", QtCore.Qt.Key.Key_Plus: "Keypad +",
-        QtCore.Qt.Key.Key_Enter: "Keypad Enter",
-        QtCore.Qt.Key.Key_Period: "Keypad .",
-    }
+    # The mapping tables and side-aware modifier detection live in
+    # venus_keys.py so the QindaTK interface shares them.
+    _QT_TO_HID = venus_keys.QT_TO_HID
+    _KEYPAD_MAP = venus_keys.KEYPAD_MAP
+    _RIGHT_MOD_SCANCODES = venus_keys.RIGHT_MOD_SCANCODES
+    _RIGHT_MOD_NATIVE_KEYS = venus_keys.RIGHT_MOD_NATIVE_KEYS
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -129,48 +80,10 @@ class KeyCaptureEdit(QtWidgets.QLineEdit):
     @classmethod
     def modifier_name_for_event(cls, event: QtGui.QKeyEvent) -> str | None:
         """Return a side-aware modifier name for a Qt key event."""
-        key = event.key()
-        altgr_key = getattr(QtCore.Qt.Key, "Key_AltGr", None)
-        modifier_defaults = {
-            QtCore.Qt.Key.Key_Shift: "Left Shift",
-            QtCore.Qt.Key.Key_Control: "Left Ctrl",
-            QtCore.Qt.Key.Key_Alt: "Left Alt",
-            QtCore.Qt.Key.Key_Meta: "Left GUI",
-        }
-        if altgr_key is not None:
-            modifier_defaults[altgr_key] = "Right Alt"
-        if key not in modifier_defaults:
-            return None
-
-        native_name = cls._RIGHT_MOD_NATIVE_KEYS.get(event.nativeVirtualKey())
-        scan_name = cls._RIGHT_MOD_SCANCODES.get(event.nativeScanCode())
-        if altgr_key is not None and key == altgr_key:
-            expected_family = "Alt"
-        else:
-            expected_family = {
-                QtCore.Qt.Key.Key_Shift: "Shift",
-                QtCore.Qt.Key.Key_Control: "Ctrl",
-                QtCore.Qt.Key.Key_Alt: "Alt",
-                QtCore.Qt.Key.Key_Meta: "GUI",
-            }[key]
-        for candidate in (native_name, scan_name):
-            if candidate and expected_family in candidate:
-                return candidate
-        return modifier_defaults[key]
+        return venus_keys.modifier_name_for_event(event)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        key = event.key()
-        mods = event.modifiers()
-
-        # Check for right-side modifiers via native scan/virtual-key metadata.
-        modifier_name = self.modifier_name_for_event(event)
-        if modifier_name:
-            name = modifier_name
-        elif bool(mods & QtCore.Qt.KeyboardModifier.KeypadModifier) and key in self._KEYPAD_MAP:
-            name = self._KEYPAD_MAP[key]
-        else:
-            name = self._QT_TO_HID.get(key, "")
-
+        name = venus_keys.hid_name_for_event(event)
         if name:
             self._hid_name = name
             self.setText(name)
@@ -1404,27 +1317,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _qt_key_to_name(self, qt_key: int, key_text: str) -> str | None:
         """Convert Qt key code to HID key name."""
-        # Handle letter keys
-        if len(key_text) == 1 and key_text.isalpha():
-            return key_text.upper()
-        # Handle number keys
-        if len(key_text) == 1 and key_text.isdigit():
-            return key_text
-        return KeyCaptureEdit._QT_TO_HID.get(qt_key)
+        return venus_keys.qt_key_to_name(qt_key, key_text)
 
     def _qt_key_to_macro_modifier(
             self, key_event: QtGui.QKeyEvent) -> tuple[str, int] | None:
         """Map a Qt modifier event to the vendor's stored-macro code."""
-        modifier_name = KeyCaptureEdit.modifier_name_for_event(key_event)
-        if modifier_name is None:
-            return None
-        # The vendor converter collapses left/right GUI keys to one byte.
-        if modifier_name in ("Left GUI", "Right GUI"):
-            modifier_name = "GUI"
-        keycode = vp.MACRO_MODIFIER_CODES.get(modifier_name)
-        if keycode is None:
-            return None
-        return modifier_name, keycode
+        return venus_keys.macro_modifier_for_event(key_event)
 
     def _set_macro_builder_status(self, message: str,
                                   error: bool = False) -> None:

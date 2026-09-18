@@ -1,3 +1,40 @@
 #!/bin/sh
+# Venus Pro Config launcher.
+#
+# Two interfaces share one protocol layer: the Qt Widgets window
+# (venus_gui.py) and the QindaTK window (venus_qml.py). Distribution
+# packages may install either or both; this launcher starts the QindaTK
+# interface when it is present and the Widgets one otherwise.
+#
+#   venusprolinux [--widgets | --qindatk] [interface options...]
+#   VENUSPROLINUX_UI=widgets|qindatk   overrides the default choice
+#   VENUSPROLINUX_PREFIX=/usr          where share/venusprolinux lives
 prefix="${VENUSPROLINUX_PREFIX:-/usr}"
-exec /usr/bin/python3 "${prefix}/share/venusprolinux/venus_gui.py" "$@"
+app="${prefix}/share/venusprolinux"
+python="${VENUSPROLINUX_PYTHON:-python3}"
+ui="${VENUSPROLINUX_UI:-}"
+
+case "$1" in
+    --widgets) ui=widgets; shift ;;
+    --qindatk) ui=qindatk; shift ;;
+esac
+if [ -z "$ui" ]; then
+    if [ -f "${app}/venus_qml.py" ]; then ui=qindatk; else ui=widgets; fi
+fi
+
+case "$ui" in
+    qindatk)
+        if [ ! -f "${app}/venus_qml.py" ]; then
+            echo "venusprolinux: the QindaTK interface is not installed (USE=qindatk)" >&2
+            exit 1
+        fi
+        exec "$python" "${app}/venus_qml.py" "$@"
+        ;;
+    *)
+        if [ ! -f "${app}/venus_gui.py" ]; then
+            echo "venusprolinux: the Qt Widgets interface is not installed (USE=widgets)" >&2
+            exit 1
+        fi
+        exec "$python" "${app}/venus_gui.py" "$@"
+        ;;
+esac

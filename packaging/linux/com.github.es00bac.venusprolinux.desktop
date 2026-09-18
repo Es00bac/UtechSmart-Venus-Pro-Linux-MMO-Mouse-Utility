@@ -6,6 +6,15 @@ Icon=com.github.es00bac.venusprolinux
 Terminal=false
 Type=Application
 Categories=Settings;HardwareSettings;
-Keywords=mouse;configuration;macro;rgb;
+Keywords=mouse;configuration;macro;rgb;dpi;
 StartupNotify=true
 StartupWMClass=venusprolinux
+Actions=qindatk;widgets;
+
+[Desktop Action qindatk]
+Name=Open with the QindaTK interface
+Exec=venusprolinux --qindatk
+
+[Desktop Action widgets]
+Name=Open with the Qt Widgets interface
+Exec=venusprolinux --widgets

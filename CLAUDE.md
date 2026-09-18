@@ -11,8 +11,14 @@ Venus Pro Config (Linux) is a reverse-engineered configuration utility for the U
 ## Running the Application
 
 ```bash
-python3 venus_gui.py
+python3 venus_gui.py          # Qt Widgets interface
+python3 venus_qml.py          # QindaTK (Qt Quick) interface; --demo --grab shot.png renders headlessly
 ```
+
+Both interfaces share the protocol modules; the QindaTK one sits on the
+Qt-free `venus_session.py` (see `docs/QINDATK_UI.md`). Gentoo packaging for
+the `qindaqt` overlay lives in `packaging/gentoo/` with USE flags `widgets`
+and `qindatk` selecting the interfaces.
 
 **Dependencies:** Python 3.8+, PyQt6, hidapi, cython. Optional: evdev (macro playback), pyusb (magic unlock for macros)
 
@@ -29,7 +35,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 - **venus_protocol.py** - USB HID protocol implementation. Contains packet building functions (`build_report`, `build_key_binding`, `build_macro_chunk`, `build_rgb`, `build_dpi`), device enumeration (`list_devices`), and checksum calculation (`calc_checksum` with base 0x55).
 
-- **venus_gui.py** - PyQt6 application with tabbed interface for Buttons, Macros, RGB, Polling, DPI, and Advanced settings. Includes `MacroRunner` QThread for software macro playback via evdev/uinput.
+- **venus_gui.py** - PyQt6 Widgets application with tabbed interface for Buttons, Macros, RGB, Polling, DPI, and Advanced settings.
+
+- **venus_session.py** - UI-independent `VenusSession` (discovery, read/parse, staging commit, macros, lighting, DPI, polling, export/import, battery LED). **venus_macro_draft.py** is the macro editor model, **venus_keys.py** the shared Qt-key-to-HID tables.
+
+- **venus_qml.py / venus_qml_backend.py / venus_qml_models.py / qml/** - the QindaTK interface: a QObject backend over `VenusSession` and a `Tk.AppWindow` QML scene.
 
 ### Protocol Details
 

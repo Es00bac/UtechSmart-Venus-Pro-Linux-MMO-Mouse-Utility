@@ -84,6 +84,32 @@ Or run directly from source:
 python3 venus_gui.py
 ```
 
+## Interfaces
+
+The utility has two interfaces over one protocol layer:
+
+- **Qt Widgets** (`venus_gui.py`), the original window.
+- **QindaTK** (`venus_qml.py` + `qml/`), a dense Qt Quick window built with the
+  [QindaTK](https://github.com/Es00bac/QindaQt) toolkit for the QindaQt desktop.
+  It adopts the desktop theme where QindaQt is running and otherwise uses
+  QindaTK's own presets.
+
+`venusprolinux` starts the QindaTK interface when it is installed and the
+Widgets one otherwise; `venusprolinux --widgets` / `--qindatk` choose
+explicitly. See [docs/QINDATK_UI.md](docs/QINDATK_UI.md).
+
+### Gentoo
+
+`packaging/gentoo/app-misc/venusprolinux` is the ebuild for the `qindaqt`
+overlay. USE `widgets` installs the Qt Widgets interface, USE `qindatk` the
+QindaTK one (both on by default; at least one is required), USE `usb` adds
+the pyusb-based device reclaim, and USE `test` runs the offline suites. The
+udev rule is installed by the package.
+
+```bash
+sudo emerge -av app-misc/venusprolinux::qindaqt
+```
+
 ## Project status
 
 - Built from reverse-engineered HID protocol work, not vendor documentation.
@@ -320,6 +346,8 @@ Useful repo entry points if you want to inspect or extend the protocol work:
 - `PROTOCOL.md`: current USB HID protocol specification
 - `old_stuff/win.md`: archived notes on the Windows utility behavior
 - `venus_protocol.py`: core protocol implementation
+- `venus_session.py`: UI-independent device session shared by both interfaces
+- `venus_qml.py`, `venus_qml_backend.py`, `qml/`: the QindaTK interface
 - `holtek_protocol.py`: Holtek profile, button, DPI, lighting, and polling protocol
 - `staging_manager.py`: change staging system
 - `transaction_controller.py`: HID transaction handling
@@ -332,7 +360,14 @@ python3 -m unittest \
   tests.test_areson_protocol_offline tests.test_holtek_protocol_offline \
   tests.test_battery_led_gui tests.test_macro_editor \
   tests.test_protocol tests.test_rgb tests.test_staging \
-  tests.test_atomic_controller tests.test_error_recovery
+  tests.test_atomic_controller tests.test_error_recovery \
+  tests.test_macro_draft tests.test_session tests.test_qml_ui
+```
+
+The QindaTK interface renders headlessly for screenshots without a device:
+
+```bash
+python3 venus_qml.py --demo --grab qindatk.png --size 1280x820
 ```
 
 Regenerate the README screenshots without opening a HID device:
