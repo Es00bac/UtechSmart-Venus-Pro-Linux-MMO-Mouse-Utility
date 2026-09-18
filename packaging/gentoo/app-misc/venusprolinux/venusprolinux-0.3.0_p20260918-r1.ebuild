@@ -19,7 +19,7 @@ EGIT_REPO_URI="file:///home/cabewse/git/QindaVenusPro.git
 	file:///home/cabewse/work_space/QindaVenusPro"
 # AGENT-NOTE: an immutable pin, not a branch - a package built twice must be
 # the same package. Bump it together with the version.
-EGIT_COMMIT="4e3eeabbc9b490f00d7b884bcccf31d110f5a7ff"
+EGIT_COMMIT="730b0f22732aec9227daaee572b81f7eaab14ef9"
 
 LICENSE="MIT"
 SLOT="0"
@@ -41,7 +41,7 @@ RDEPEND="
 	$(python_gen_cond_dep '
 		dev-python/hidapi[${PYTHON_USEDEP}]
 		dev-python/pyqt6[gui,${PYTHON_USEDEP}]
-		qindatk? ( dev-python/pyqt6[qml,quick,${PYTHON_USEDEP}] )
+		qindatk? ( dev-python/pyqt6[dbus,qml,quick,${PYTHON_USEDEP}] )
 		widgets? ( dev-python/pyqt6[widgets,${PYTHON_USEDEP}] )
 		usb? ( dev-python/pyusb[${PYTHON_USEDEP}] )
 	')
