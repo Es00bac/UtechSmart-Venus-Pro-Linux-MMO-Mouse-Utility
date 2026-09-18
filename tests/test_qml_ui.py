@@ -29,6 +29,7 @@ try:
     import venus_protocol as vp
     import venus_session as vs
     from venus_qml_backend import VenusBackend
+    from venus_qml_globalmenu import GlobalMenuHostMonitor
 except ImportError:  # pragma: no cover - minimal test hosts
     QtCore = None
 
@@ -61,6 +62,8 @@ class QindaTkInterfaceTests(unittest.TestCase):
         self.backend.loadDemo("venus_pro")
         self.engine = QtQml.QQmlApplicationEngine()
         self.engine.rootContext().setContextProperty("venusBackend", self.backend)
+        self.menu_host = GlobalMenuHostMonitor(enabled=False)
+        self.engine.rootContext().setContextProperty("globalMenuHost", self.menu_host)
         self.engine.load(QtCore.QUrl.fromLocalFile(str(REPO / "qml" / "Main.qml")))
         self.assertTrue(self.engine.rootObjects(), "qml/Main.qml failed to load")
         self.window = self.engine.rootObjects()[0]
@@ -173,6 +176,16 @@ class QindaTkInterfaceTests(unittest.TestCase):
         self.spin()
         self.assertTrue(dialog.property("visible"))
         self.assertIn("Demo mode", dialog.property("text"))
+
+    def test_local_menu_bar_follows_global_menu_hosting(self):
+        bar = self.find("menuBar")
+        self.assertTrue(bar.property("visible"))
+        self.menu_host._set_hosted(True)
+        self.spin()
+        self.assertFalse(bar.property("visible"))
+        self.window.setProperty("menuInWindow", True)
+        self.spin()
+        self.assertTrue(bar.property("visible"))
 
     def test_holtek_demo_hides_areson_only_controls(self):
         self.backend.loadDemo("holtek")

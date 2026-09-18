@@ -29,7 +29,23 @@ qml/*Page.qml          Buttons, Macros, Lighting, DPI, Polling, Advanced
 qml/SidePanel.qml      mouse picture and the log
 qml/MacroEventRow.qml  one macro event row
 qml/DesktopThemeBridge.qml  QindaTK.QindaQt bridge (loaded only where the QindaQt desktop is present)
+qml/GlobalMenuMirror.qml    the menu as a Qt.labs.platform MenuBar, exported to the panel's global menu
+venus_qml_globalmenu.py     GlobalMenuHostMonitor: registrar IsMenuHosted / MenuHostedChanged over D-Bus
 ```
+
+## Global menu
+
+The QindaQt panel's global-menu applet consumes a `com.canonical.dbusmenu`
+endpoint announced per window over the KDE appmenu Wayland protocol. QindaTK's
+`Tk.MenuBar` is purely visual, so `GlobalMenuMirror.qml` declares the same
+menu as a `Qt.labs.platform` menu bar; under the session's `qindaqt` platform
+theme Qt exports it (`/MenuBar/<n>` on the application's bus connection) and
+announces it, and every item routes through the same window functions as the
+in-window bar. Following ADR-0077 the in-window bar is hidden only after the
+registrar acknowledges hosting of that exact endpoint (`IsMenuHosted`,
+`MenuHostedChanged`), and it comes back when the registrar or its renderer
+goes away. *View ▸ Menu In Window* (or `--menu-in-window`) keeps it visible
+regardless; the status bar shows "Menu in panel" while the shell hosts it.
 
 ## Running
 

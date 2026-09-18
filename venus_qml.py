@@ -39,6 +39,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--theme", default="", help="QindaTK preset (sloom-dark, sloom-light, graphite)")
     parser.add_argument("--density", default="", help="compact, comfortable or touch")
     parser.add_argument("--no-tray", action="store_true", help="never create a tray icon")
+    parser.add_argument("--exit-after", type=float, metavar="SECONDS",
+                        help="quit after this many seconds and report the global-menu state (diagnostics)")
+    parser.add_argument("--menu-in-window", action="store_true",
+                        help="keep the menu bar inside the window even when the panel hosts it")
     parser.add_argument("--import-path", action="append", default=[],
                         help="extra QML import path (a QindaTK build tree)")
     return parser.parse_args(argv)
@@ -78,9 +82,14 @@ def main(argv: list[str] | None = None) -> int:
         from PyQt6 import QtWidgets
     except ImportError:  # pragma: no cover - pyqt6 built without widgets
         QtWidgets = None
+    try:
+        from PyQt6 import QtDBus
+    except ImportError:  # pragma: no cover - pyqt6 built without dbus
+        QtDBus = None
 
     import venus_session as vs
     from venus_qml_backend import VenusBackend, battery_icon
+    from venus_qml_globalmenu import GlobalMenuHostMonitor
 
     app_class = QtWidgets.QApplication if QtWidgets is not None else QtGui.QGuiApplication
     app = app_class(sys.argv[:1])
@@ -113,12 +122,18 @@ def main(argv: list[str] | None = None) -> int:
     for path in args.import_path:
         engine.addImportPath(path)
     engine.rootContext().setContextProperty("venusBackend", backend)
+    # The QindaQt panel hosts the menu; the QML hides its own bar only once
+    # the shell acknowledges that (nothing to acknowledge when headless).
+    global_menu = GlobalMenuHostMonitor(enabled=not headless)
+    engine.rootContext().setContextProperty("globalMenuHost", global_menu)
     engine.load(QtCore.QUrl.fromLocalFile(str(QML_DIR / "Main.qml")))
     roots = engine.rootObjects()
     if not roots:
         print("venus_qml: failed to load qml/Main.qml", file=sys.stderr)
         return 1
     window = roots[0]
+    if args.menu_in_window:
+        window.setProperty("menuInWindow", True)
     backend.showRequested.connect(lambda: (window.show(), window.raise_(), window.requestActivate()))
 
     if headless:
@@ -142,6 +157,16 @@ def main(argv: list[str] | None = None) -> int:
         del engine
         return 0
 
+    if args.exit_after:
+        print(f"global menu: service={QtDBus.QDBusConnection.sessionBus().baseService()}"
+              if QtDBus is not None else "global menu: no QtDBus", flush=True)
+
+        def report():
+            print(f"global menu: enabled={global_menu.enabled} hosted={global_menu.hosted} "
+                  f"endpoint='{global_menu.endpoint}' menuBarVisible="
+                  f"{window.findChild(QtCore.QObject, 'menuBar').property('visible')}")
+            app.quit()
+        QtCore.QTimer.singleShot(int(args.exit_after * 1000), report)
     code = app.exec()
     del engine
     return code
