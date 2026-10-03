@@ -1,7 +1,7 @@
 pkgbase = venusprolinux-git
 	pkgdesc = Linux configuration and battery utility for UtechSmart Venus mice
 	pkgver = 0.3.0
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility
 	install = venusprolinux.install
 	arch = any

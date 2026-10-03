@@ -69,7 +69,7 @@ jobs:
             useradd -m builder && chown builder:builder /out &&
             su builder -c \"DIST_DIR=/out bash /src/packaging/arch/build-arch.sh '$VERSION'\" &&
             pacman -U --noconfirm /out/*.pkg.tar.zst &&
-            python -c 'import hid; from PyQt6 import QtCore, QtGui, QtWidgets'"
+            python -c 'import sys; sys.path.insert(0, \"/usr/share/venusprolinux\"); import hid, venus_gui'"
       - uses: actions/upload-artifact@v4
         with:
           name: arch

@@ -50,6 +50,37 @@ The repository now contains a complete VCS `PKGBUILD`; it uses Arch's
 `python-pyqt6` and `python-hidapi` packages and does not build Python packages
 with pip.
 
+If an AUR helper fails with `cannot stat 'packaging/linux/venusprolinux.desktop'`,
+its build recipe still uses the old desktop filename. Refresh the **PKGBUILD**
+as well as the Git sources; rebuilding fresh sources with the same recipe
+does not fix it. The current recipe uses
+`com.github.es00bac.venusprolinux.desktop` and includes `venus_keys.py`, which
+the current Widgets interface requires. A desktop-file symlink alone is not
+a complete fix for an older recipe.
+
+To build using this repository's maintained recipe instead of a helper's
+cached recipe, use a fresh working directory on Arch Linux:
+
+```bash
+sudo pacman -S --needed base-devel git
+git clone https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility.git venusprolinux-build
+cd venusprolinux-build
+less PKGBUILD venusprolinux.install
+makepkg -si
+```
+
+Run `makepkg` as your regular user. This builds a pacman-managed package and
+prompts before installing dependencies and the result. Updating this GitHub
+recipe does not automatically update the separate AUR repository; maintainers
+must also publish `PKGBUILD`, `.SRCINFO`, and `venusprolinux.install` there.
+
+The offline Arch packaging regression checks can be run with
+`python3 tests/test_arch_packaging.py`. They stage both VCS recipes and the
+release source archive, validate desktop/icon/metadata links, and check the
+installed Python module closure. With PyQt6 and hidapi installed, they also
+import the staged Widgets interface without opening a device. They do not
+replace an Arch `makepkg` build or a hardware test.
+
 ### Arch Linux (manual)
 
 Install the Python packages with pacman first. `cython` is included here for

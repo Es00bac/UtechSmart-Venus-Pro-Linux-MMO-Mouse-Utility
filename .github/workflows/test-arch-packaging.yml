@@ -1,0 +1,56 @@
+name: Test Arch packaging
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  payload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install import-test dependencies
+        run: python -m pip install PyQt6 hidapi
+      - name: Verify VCS and release payloads without hardware
+        run: python tests/test_arch_packaging.py
+      - name: Run maintained offline regressions
+        run: |
+          python -m unittest -q \
+            tests.test_areson_protocol_offline tests.test_holtek_protocol_offline \
+            tests.test_atomic_controller tests.test_staging tests.test_macro_draft \
+            tests.test_macro_editor tests.test_battery_led_gui
+
+  arch-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and install the release package on Arch
+        run: |
+          mkdir -p dist
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist:/out" archlinux:latest bash -lc '
+            set -e
+            pacman -Syu --noconfirm --needed base-devel python python-hidapi python-pyqt6
+            useradd -m builder
+            chown builder:builder /out
+            su builder -c "DIST_DIR=/out bash /src/packaging/arch/build-arch.sh 0.3.0"
+            pacman -U --noconfirm /out/*.pkg.tar.zst
+            cd /tmp
+            PYTHONPATH=/usr/share/venusprolinux python -c "import hid, venus_gui"
+          '
+      - name: Prepare AUR recipe bundle
+        run: |
+          mkdir -p dist/aur
+          cp PKGBUILD .SRCINFO venusprolinux.install dist/aur/
+          tar -czf dist/venusprolinux-git-aur-recipe.tar.gz -C dist/aur .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-package-and-aur-recipe
+          path: |
+            dist/*.pkg.tar.zst
+            dist/venusprolinux-git-aur-recipe.tar.gz

@@ -2,7 +2,7 @@
 
 pkgname=venusprolinux-git
 pkgver=0.3.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Linux configuration and battery utility for UtechSmart Venus mice"
 arch=('any')
 url="https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility"
@@ -24,7 +24,7 @@ package() {
     cd "$srcdir/venusprolinux"
 
     install -d "$pkgdir/usr/share/venusprolinux"
-    install -m644 venus_gui.py venus_protocol.py holtek_protocol.py \
+    install -m644 venus_gui.py venus_keys.py venus_protocol.py holtek_protocol.py \
         device_driver.py staging_manager.py transaction_controller.py \
         mouseimg.png icon.png "$pkgdir/usr/share/venusprolinux/"
 
