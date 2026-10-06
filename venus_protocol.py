@@ -1191,7 +1191,7 @@ def _format_open_error(path: bytes | str, exc: BaseException) -> str:
     detail = str(exc).strip() or exc.__class__.__name__
     lowered = detail.lower()
     if "permission" in lowered or "access denied" in lowered:
-        return (f"Permission denied opening {shown}. Install 99-venus-pro.rules, "
+        return (f"Permission denied opening {shown}. Install 70-venus-pro.rules, "
                 "reload udev rules, then unplug and reconnect the mouse/receiver.")
     return (f"Cannot open config interface {shown}: {detail}. Check the udev ACL "
             "and close Wine, virtual machines, or capture tools that may have claimed it.")

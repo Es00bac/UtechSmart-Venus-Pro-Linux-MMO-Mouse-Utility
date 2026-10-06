@@ -2,7 +2,7 @@
 
 pkgname=venusprolinux-git
 pkgver=0.3.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Linux configuration and battery utility for UtechSmart Venus mice"
 arch=('any')
 url="https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility"
@@ -36,8 +36,8 @@ package() {
         "$pkgdir/usr/share/metainfo/com.github.es00bac.venusprolinux.metainfo.xml"
     install -Dm644 icon.png \
         "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/com.github.es00bac.venusprolinux.png"
-    install -Dm644 packaging/linux/99-venus-pro.rules \
-        "$pkgdir/usr/lib/udev/rules.d/99-venus-pro.rules"
+    install -Dm644 packaging/linux/70-venus-pro.rules \
+        "$pkgdir/usr/lib/udev/rules.d/70-venus-pro.rules"
     install -Dm644 LICENSE \
         "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

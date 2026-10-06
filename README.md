@@ -29,8 +29,8 @@ AppImage cannot install host udev rules. Download and install the reviewed
 v0.3.0 rule once, then reconnect the mouse or receiver:
 
 ```bash
-curl -LO https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/v0.3.0/packaging/linux/99-venus-pro.rules
-sudo install -Dm644 99-venus-pro.rules /etc/udev/rules.d/99-venus-pro.rules
+curl -fL -o 70-venus-pro.rules https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/v0.3.0/packaging/linux/99-venus-pro.rules
+sudo install -Dm644 70-venus-pro.rules /etc/udev/rules.d/70-venus-pro.rules
 sudo udevadm control --reload-rules
 ```
 
@@ -269,18 +269,26 @@ Optional dependencies:
 
 ### Non-root access with udev
 
-The installer and packages install `packaging/linux/99-venus-pro.rules`. For a
+The installer and packages install `packaging/linux/70-venus-pro.rules`. For a
 source checkout, install that same reviewed file and reconnect the device:
 
 ```bash
-sudo install -Dm644 packaging/linux/99-venus-pro.rules /etc/udev/rules.d/99-venus-pro.rules
+sudo install -Dm644 packaging/linux/70-venus-pro.rules /etc/udev/rules.d/70-venus-pro.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=hidraw
 ```
 
 The rules cover both the `hidraw` node used by hidapi and the USB device node
 used by optional diagnostics. They use desktop-session ACLs (`TAG+="uaccess"`)
-with mode `0660`, rather than leaving the mouse world-writable.
+with mode `0660`, rather than leaving the mouse world-writable. The `70-`
+prefix is required: `uaccess` must be set before systemd processes
+`73-seat-late.rules` to assign the active desktop user an ACL.
+
+When upgrading a manual installation, remove your old
+`/etc/udev/rules.d/99-venus-pro.rules` after installing the new rule. Native
+package upgrades replace the old packaged rule automatically. The v0.3.0
+download above retains its historical source filename but is installed
+with the corrected `70-` prefix.
 
 ### “Mouse detected, but open failed”
 
