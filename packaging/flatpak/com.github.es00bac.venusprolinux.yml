@@ -26,7 +26,7 @@ modules:
       - install -m644 packaging/linux/com.github.es00bac.venusprolinux.desktop /app/share/applications/com.github.es00bac.venusprolinux.desktop
       - python3 -c "from PyQt6.QtCore import Qt; from PyQt6.QtGui import QImage; image = QImage('icon.png').scaled(256, 256, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation); assert image.save('/app/share/icons/hicolor/256x256/apps/com.github.es00bac.venusprolinux.png')"
       - install -m644 com.github.es00bac.venusprolinux.appdata.xml /app/share/metainfo/com.github.es00bac.venusprolinux.metainfo.xml
-      - install -m644 packaging/linux/99-venus-pro.rules /app/share/venusprolinux/99-venus-pro.rules
+      - install -m644 packaging/linux/70-venus-pro.rules /app/share/venusprolinux/70-venus-pro.rules
       - install -m644 README.md PROTOCOL.md LICENSE /app/share/venusprolinux/
       - install -m644 docs/MACRO_EDITOR.md /app/share/venusprolinux/
     sources:

@@ -101,7 +101,9 @@ src_install() {
 
 	# The reviewed rule: uaccess ACLs on the hidraw and USB nodes of the
 	# three supported VID:PIDs, mode 0660 as the fallback.
-	udev_dorules packaging/linux/99-venus-pro.rules
+	# This ebuild pins older sources containing the historical filename.
+	cp packaging/linux/99-venus-pro.rules "${T}/70-venus-pro.rules" || die
+	udev_dorules "${T}/70-venus-pro.rules"
 
 	dodoc README.md PROTOCOL.md docs/MACRO_EDITOR.md docs/QINDATK_UI.md
 }
@@ -110,7 +112,7 @@ pkg_postinst() {
 	xdg_pkg_postinst
 	udev_reload
 	elog "Unplug and reconnect the Venus mouse or its receiver once so the"
-	elog "udev uaccess ACL from 99-venus-pro.rules applies to your session."
+	elog "udev uaccess ACL from 70-venus-pro.rules applies to your session."
 	if use qindatk && use widgets; then
 		elog "'venusprolinux' starts the QindaTK interface; 'venusprolinux --widgets'"
 		elog "starts the Qt Widgets one (both are desktop actions of the launcher)."

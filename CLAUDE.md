@@ -24,10 +24,11 @@ and `qindatk` selecting the interfaces.
 
 **udev rules for non-root access:**
 ```bash
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", MODE="0666"' | sudo tee /etc/udev/rules.d/99-venus-pro.rules
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa08", MODE="0666"' | sudo tee -a /etc/udev/rules.d/99-venus-pro.rules
-sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo install -Dm644 packaging/linux/70-venus-pro.rules /etc/udev/rules.d/70-venus-pro.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=hidraw
 ```
+Reconnect the mouse/receiver. Keep the `70-` prefix so `uaccess` is set before
+systemd's `73-seat-late.rules` assigns the desktop-session ACL.
 
 ## Architecture
 

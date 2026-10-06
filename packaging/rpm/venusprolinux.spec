@@ -48,8 +48,8 @@ install -m644 icon.png \
     %{buildroot}%{_datadir}/icons/hicolor/1024x1024/apps/%{app_id}.png
 install -m644 %{app_id}.appdata.xml \
     %{buildroot}%{_metainfodir}/%{app_id}.metainfo.xml
-install -m644 packaging/linux/99-venus-pro.rules \
-    %{buildroot}%{_udevrulesdir}/99-venus-pro.rules
+install -m644 packaging/linux/70-venus-pro.rules \
+    %{buildroot}%{_udevrulesdir}/70-venus-pro.rules
 
 %files
 %license LICENSE
@@ -59,7 +59,7 @@ install -m644 packaging/linux/99-venus-pro.rules \
 %{_datadir}/applications/%{app_id}.desktop
 %{_datadir}/icons/hicolor/1024x1024/apps/%{app_id}.png
 %{_metainfodir}/%{app_id}.metainfo.xml
-%{_udevrulesdir}/99-venus-pro.rules
+%{_udevrulesdir}/70-venus-pro.rules
 
 %changelog
 * Wed Aug 19 2026 Es00bac <es00bac@github.com> - 0.3.0-1

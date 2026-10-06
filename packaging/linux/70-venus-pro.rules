@@ -1,5 +1,6 @@
 # UtechSmart Venus Pro / Venus MMO Gaming Mouse
-# Desktop sessions receive an ACL through uaccess; MODE is the safe fallback.
+# Set uaccess before systemd's 73-seat-late.rules assigns desktop-session ACLs.
+# Keep the 70- filename; MODE is the fallback without an active desktop session.
 
 # Venus Pro (Wireless Receiver)
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="25a7", ATTRS{idProduct}=="fa07", TAG+="uaccess", MODE="0660"

@@ -69,7 +69,7 @@ venus_install_payload() {
     install -m644 "${VENUS_REPO_ROOT}/LICENSE" "${doc_dir}/copyright"
 
     if [[ "${include_udev}" == "yes" ]]; then
-        install -Dm644 "${VENUS_REPO_ROOT}/packaging/linux/99-venus-pro.rules" \
-            "${root}/usr/lib/udev/rules.d/99-venus-pro.rules"
+        install -Dm644 "${VENUS_REPO_ROOT}/packaging/linux/70-venus-pro.rules" \
+            "${root}/usr/lib/udev/rules.d/70-venus-pro.rules"
     fi
 }
