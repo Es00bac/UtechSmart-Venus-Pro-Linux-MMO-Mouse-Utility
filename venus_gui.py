@@ -2479,7 +2479,7 @@ class MainWindow(QtWidgets.QMainWindow):
             [
                 "Keyboard Key", "Left Click", "Right Click", "Middle Click",
                 "Forward", "Back", "DPI Control", "Fire Key",
-                "Profile Switch", "Disabled",
+                "Profile Switch", "Profile Up", "Profile Down", "Disabled",
             ] if is_holtek else [
                 "Keyboard Key", "Left Click", "Right Click", "Middle Click",
                 "Forward", "Back", "Macro", "Fire Key", "Double Click", "Triple Click",
@@ -2497,17 +2497,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.action_select.blockSignals(False)
         self._update_bind_ui(self.action_select.currentText())
 
-        modifier_tooltip = (
-            "The Holtek button record stores one HID key and has no modifier "
-            "field." if is_holtek else "Combine modifiers with the selected key.")
+        modifier_tooltip = "Combine modifiers with the selected key."
         for checkbox in (self.mod_ctrl, self.mod_shift, self.mod_alt, self.mod_win):
-            checkbox.blockSignals(True)
-            if is_holtek:
-                checkbox.setChecked(False)
-            checkbox.setEnabled(not is_holtek)
+            checkbox.setEnabled(True)
             checkbox.setToolTip(modifier_tooltip)
-            checkbox.blockSignals(False)
-        self.modifier_label.setEnabled(not is_holtek)
+        self.modifier_label.setEnabled(True)
         self.modifier_label.setToolTip(modifier_tooltip)
 
         self.special_delay_label.setVisible(not is_holtek)

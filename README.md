@@ -365,8 +365,6 @@ Practical notes:
 - Hardware macros are confirmed only for the Areson `25a7:fa07/fa08` family.
   The Macros tab is disabled for the Holtek controller rather than guessing at
   an incompatible storage format.
-- Holtek keyboard-button records contain one HID usage and no modifier field;
-  the UI disables modifier checkboxes for that controller.
 - The Areson lighting command is an EEPROM write rather than a known volatile
   LED command. Battery LED mode therefore writes only on a reported 10% step
   change and restores the prior lighting on normal application exit.

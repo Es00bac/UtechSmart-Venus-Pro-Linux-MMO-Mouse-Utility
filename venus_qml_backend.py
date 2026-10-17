@@ -306,7 +306,7 @@ class VenusBackend(QtCore.QObject):
                               for label, kind, code in manual_event_choices()],
             "buttonChoices": [{"key": key, "label": session.button_label(key)}
                               for key in session.button_keys],
-            "modifiersEnabled": not holtek,
+            "modifiersEnabled": True,
             "macrosEnabled": not holtek,
             "advancedEnabled": not holtek,
             "profilesEnabled": not holtek,
@@ -541,15 +541,14 @@ class VenusBackend(QtCore.QObject):
             hid_key = (vp.HID_KEY_USAGE.get(key_name, 0)
                        or vp.HID_KEY_USAGE.get(key_name.upper(), 0))
             modifier = 0
-            if not self.session.is_holtek:
-                if state.get("modCtrl"):
-                    modifier |= vp.MODIFIER_CTRL
-                if state.get("modShift"):
-                    modifier |= vp.MODIFIER_SHIFT
-                if state.get("modAlt"):
-                    modifier |= vp.MODIFIER_ALT
-                if state.get("modWin"):
-                    modifier |= vp.MODIFIER_WIN
+            if state.get("modCtrl"):
+                modifier |= vp.MODIFIER_CTRL
+            if state.get("modShift"):
+                modifier |= vp.MODIFIER_SHIFT
+            if state.get("modAlt"):
+                modifier |= vp.MODIFIER_ALT
+            if state.get("modWin"):
+                modifier |= vp.MODIFIER_WIN
             params = {"key": hid_key, "mod": modifier}
         elif action == "Macro":
             mode = int(state.get("macroMode", vp.MACRO_REPEAT_ONCE))

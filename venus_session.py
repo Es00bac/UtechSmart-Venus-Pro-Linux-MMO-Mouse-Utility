@@ -43,7 +43,7 @@ ARESON_ACTIONS = [
 HOLTEK_ACTIONS = [
     "Keyboard Key", "Left Click", "Right Click", "Middle Click",
     "Forward", "Back", "DPI Control", "Fire Key",
-    "Profile Switch", "Disabled",
+    "Profile Switch", "Profile Up", "Profile Down", "Disabled",
 ]
 MOUSE_ACTION_VALUES = {"Left Click": 0x01, "Right Click": 0x02,
                        "Middle Click": 0x04, "Back": 0x08, "Forward": 0x10}
