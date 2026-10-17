@@ -418,7 +418,9 @@ commands are:
 - `f1` write control/commit categories
 - `f2` memory read
 - `f3` memory write
-- `f5` polling rate
+- `f5` session bracket: `f5 00` opens and `f5 01` closes hid.exe's read-all
+  (0x413830) and its write-all on Apply (0x413430); its only F5 builder
+  (0x410420) is never given another value, so F5 does not set the polling rate
 
 It has five real hardware profiles and a 20-entry button map. Entries 4 and 5
 (zero-based indices) are physical DPI Up and DPI Down, so those controls can be
@@ -433,7 +435,13 @@ Confirmed Holtek profile data represented by the UI now includes:
   unit is 200 DPI;
 - per-profile lighting records `[80, R, G, B, mode, brightness, speed, 03]`;
 - physical Profile Switch (`8d`), DPI Up (`8a`), and DPI Down (`89`) button
-  actions.
+  actions;
+- one polling code per profile, `[code, 00]` at `0x0032 + 2p`: `08` 125 Hz,
+  `04` 250, `02` 500, `01` 1000. hid.exe reads them with F2 `0x32` (5 bytes)
+  and F2 `0x38` (3 bytes) (0x40f990) and writes all five as F3 `0x32`
+  `[p0 00 p1 00 p2 00]` and F3 `0x38` `[p3 00 p4 00]` followed by `f1 02 08`
+  (0x410230); its UI, ldcfg.exe, stores the four choices as 8/4/2/1 and
+  defaults to 2 (0x40eac5, 0x415336, 0x430961). **Binary**
 
 When editing Holtek DPI, the application preserves the read color indices and
 current stage instead of zeroing both fields. Effect speed is exposed as a raw
@@ -451,7 +459,7 @@ modifier field. **Binary, live implementation history**
 | DPI button actions | loop/up/down on mapped controls | up/down, including physical top buttons |
 | Profile switching | generic type hidden for this one-profile model | confirmed `8d` action exposed |
 | Hardware macros | 16 slots, editor and repeat modes | disabled; no compatible format confirmed |
-| Polling | 125/250/500/1000 Hz | 125/250/500/1000 Hz |
+| Polling | 125/250/500/1000 Hz | 125/250/500/1000 Hz per profile |
 | Lighting | color, known modes, brightness/speed, battery gauge | per-profile color/mode/brightness/speed |
 | Raw reports | 17-byte diagnostic tab | disabled to prevent cross-protocol packets |
 

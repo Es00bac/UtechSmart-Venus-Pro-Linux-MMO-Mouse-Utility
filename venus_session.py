@@ -611,8 +611,10 @@ class VenusSession:
         if use_active_profile:
             profile = max(0, min(4, int(raw.get("active_profile", 0))))
             self.holtek_profile = profile
-        config = DeviceConfig(holtek_profile=profile)
+        config = DeviceConfig(holtek_profile=profile, polling_rate=raw.get("polling_rate"))
         self.log(f"  Read {len(raw['buttons'])} button entries from device")
+        if config.polling_rate:
+            self.log(f"  Polling Rate: {config.polling_rate}Hz")
         for info in raw["buttons"]:
             key = f"Button {info['index'] + 1}"
             if key not in self.active_button_profiles:
@@ -927,8 +929,8 @@ class VenusSession:
             try:
                 device = hp.HoltekDevice(self.device_path)
                 device.open()
-                device.set_polling_rate(rate)
-                self.log(f"Holtek Polling: {rate} Hz")
+                device.set_polling_rate(rate, profile=self.holtek_profile)
+                self.log(f"Holtek Polling (profile {self.holtek_profile + 1}): {rate} Hz")
             except Exception as exc:
                 raise SessionError(str(exc)) from exc
             finally:

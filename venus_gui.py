@@ -3292,15 +3292,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 device.close()
 
     def _apply_polling_holtek(self, rate: int) -> None:
-        """Apply polling rate on Holtek device using F5 command."""
+        """Write the selected profile's polling rate (hid.exe: F3 0x32/0x38, F1 02 08)."""
         if not self._require_device():
             return
         device = None
         try:
             device = hp.HoltekDevice(self.device_path)
             device.open()
-            device.set_polling_rate(rate)
-            self._log(f"Holtek Polling: {rate} Hz")
+            device.set_polling_rate(rate, profile=self.holtek_profile)
+            self._log(f"Holtek Polling (profile {self.holtek_profile + 1}): {rate} Hz")
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Polling rate failed", str(exc))
         finally:
