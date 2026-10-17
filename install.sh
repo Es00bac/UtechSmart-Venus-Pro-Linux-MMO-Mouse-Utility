@@ -1,29 +1,18 @@
 #!/bin/bash
 set -e
 
+cd "$(dirname "$0")"
 echo "Installing Venus Pro Linux utility..."
 
-# Install main files
-sudo install -Dm755 venus_gui.py /usr/share/venusprolinux/venus_gui.py
-sudo install -Dm644 venus_protocol.py /usr/share/venusprolinux/venus_protocol.py
-sudo install -Dm644 holtek_protocol.py /usr/share/venusprolinux/holtek_protocol.py
-sudo install -Dm644 device_driver.py /usr/share/venusprolinux/device_driver.py
-sudo install -Dm644 staging_manager.py /usr/share/venusprolinux/staging_manager.py
-sudo install -Dm644 transaction_controller.py /usr/share/venusprolinux/transaction_controller.py
-sudo install -Dm644 mouseimg.png /usr/share/venusprolinux/mouseimg.png
+# Install the same payload the distribution packages ship. The udev rule goes
+# to /etc below, since this is a local administrator install.
+sudo bash -c 'source packaging/lib.sh && venus_install_payload / /usr no'
 
-# Install icon
-sudo install -Dm644 icon.png /usr/share/icons/hicolor/512x512/apps/venusprolinux.png
-
-# Install desktop entry
-sudo install -Dm644 packaging/linux/venusprolinux.desktop /usr/share/applications/venusprolinux.desktop
-
-# Install the same launcher used by distribution packages.
-sudo install -Dm755 packaging/linux/venusprolinux /usr/bin/venusprolinux
-
-# Install metadata used by desktop software centers.
-sudo install -Dm644 com.github.es00bac.venusprolinux.appdata.xml \
-    /usr/share/metainfo/com.github.es00bac.venusprolinux.appdata.xml
+# Remove files that older versions of this script installed under other names.
+sudo rm -f /usr/share/applications/venusprolinux.desktop \
+    /usr/share/icons/hicolor/512x512/apps/venusprolinux.png \
+    /usr/share/metainfo/com.github.es00bac.venusprolinux.appdata.xml \
+    /etc/udev/rules.d/99-venus-pro.rules
 
 # Update icon cache
 sudo gtk-update-icon-cache -f /usr/share/icons/hicolor/ 2>/dev/null || true
