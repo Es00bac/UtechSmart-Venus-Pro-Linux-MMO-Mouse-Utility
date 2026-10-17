@@ -30,7 +30,7 @@ install -m644 \
     "${SOURCE_DIR}/"
 install -m644 "${VENUS_REPO_ROOT}/docs/MACRO_EDITOR.md" "${SOURCE_DIR}/docs/"
 install -m644 "${VENUS_REPO_ROOT}/packaging/linux/${VENUS_APP_ID}.desktop" \
-    "${VENUS_REPO_ROOT}/packaging/linux/99-venus-pro.rules" \
+    "${VENUS_REPO_ROOT}/packaging/linux/70-venus-pro.rules" \
     "${SOURCE_DIR}/packaging/linux/"
 install -m755 "${VENUS_REPO_ROOT}/packaging/linux/venusprolinux" \
     "${SOURCE_DIR}/packaging/linux/venusprolinux"

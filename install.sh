@@ -29,8 +29,8 @@ sudo install -Dm644 com.github.es00bac.venusprolinux.appdata.xml \
 sudo gtk-update-icon-cache -f /usr/share/icons/hicolor/ 2>/dev/null || true
 
 # Install the reviewed udev rules rather than maintaining a second copy here.
-sudo install -Dm644 packaging/linux/99-venus-pro.rules /etc/udev/rules.d/99-venus-pro.rules
+sudo install -Dm644 packaging/linux/70-venus-pro.rules /etc/udev/rules.d/70-venus-pro.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=hidraw
-echo "udev rules installed to /etc/udev/rules.d/99-venus-pro.rules"
+echo "udev rules installed to /etc/udev/rules.d/70-venus-pro.rules"
 echo "Unplug and reconnect the mouse/receiver so the new ACL is applied."

@@ -135,7 +135,10 @@ package
                 for asset in ("icon.png", "mouseimg.png"):
                     installed = package / "usr/share/venusprolinux" / asset
                     self.assertEqual(installed.read_bytes(), (ROOT / asset).read_bytes())
-                self.assertTrue((package / "usr/lib/udev/rules.d/99-venus-pro.rules").is_file())
+                rules_dir = package / "usr/lib/udev/rules.d"
+                rule = rules_dir / "70-venus-pro.rules"
+                self.assertEqual(rule.read_bytes(), (ROOT / "packaging/linux" / rule.name).read_bytes())
+                self.assertFalse((rules_dir / "99-venus-pro.rules").exists())
                 licenses = list((package / "usr/share/licenses").glob("*/LICENSE"))
                 self.assertEqual(len(licenses), 1)
                 self.assertEqual(licenses[0].read_bytes(), (ROOT / "LICENSE").read_bytes())
