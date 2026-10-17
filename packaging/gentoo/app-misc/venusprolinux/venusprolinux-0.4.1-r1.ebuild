@@ -80,7 +80,8 @@ src_install() {
 		venus_session.py venus_macro_draft.py mouseimg.png icon.png
 	use widgets && doins venus_gui.py
 	if use qindatk; then
-		doins venus_qml.py venus_qml_backend.py venus_qml_models.py
+		doins venus_qml.py venus_qml_backend.py venus_qml_models.py \
+			venus_qml_globalmenu.py
 		doins -r qml
 	fi
 	python_optimize "${ED}${app}"
