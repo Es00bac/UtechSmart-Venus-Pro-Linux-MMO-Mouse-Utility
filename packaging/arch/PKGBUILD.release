@@ -2,7 +2,7 @@
 
 pkgname=venusprolinux
 pkgver=@VERSION@
-pkgrel=3
+pkgrel=1
 pkgdesc="Linux configuration and battery utility for UtechSmart Venus mice"
 arch=('any')
 url="https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility"

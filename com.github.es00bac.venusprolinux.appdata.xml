@@ -53,6 +53,15 @@
     <name>Es00bac</name>
   </developer>
   <releases>
+    <release version="0.4.1" date="2026-10-17">
+      <description>
+        <p>Fixes non-root access to the mouse.</p>
+        <ul>
+          <li>The udev rule is now installed as 70-venus-pro.rules, so systemd grants the desktop user access to the mouse.</li>
+          <li>install.sh installs the full application and removes files left by older versions.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-16">
       <description>
         <p>Feature parity with the Windows driver, and packaging fixes.</p>

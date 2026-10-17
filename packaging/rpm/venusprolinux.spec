@@ -1,4 +1,4 @@
-%{!?venus_version:%global venus_version 0.4.0}
+%{!?venus_version:%global venus_version 0.4.1}
 %global app_id com.github.es00bac.venusprolinux
 
 Name:           venusprolinux
@@ -62,6 +62,9 @@ install -m644 packaging/linux/70-venus-pro.rules \
 %{_udevrulesdir}/70-venus-pro.rules
 
 %changelog
+* Sat Oct 17 2026 Es00bac <es00bac@github.com> - 0.4.1-1
+- Install the udev rule as 70-venus-pro.rules so desktop users get access.
+
 * Fri Oct 16 2026 Es00bac <es00bac@github.com> - 0.4.0-1
 - Windows driver parity: Double Click, full consumer keys, exact DPI tables.
 - Install venus_keys.py, which the Widgets interface imports.

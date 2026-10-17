@@ -26,10 +26,10 @@ Download the package for your distribution from the
 
 The native packages install the udev access rule automatically. Flatpak and
 AppImage cannot install host udev rules. Download and install the reviewed
-v0.4.0 rule once, then reconnect the mouse or receiver:
+v0.4.1 rule once, then reconnect the mouse or receiver:
 
 ```bash
-curl -fL -o 70-venus-pro.rules https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/v0.4.0/packaging/linux/99-venus-pro.rules
+curl -fL -o 70-venus-pro.rules https://raw.githubusercontent.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/v0.4.1/packaging/linux/70-venus-pro.rules
 sudo install -Dm644 70-venus-pro.rules /etc/udev/rules.d/70-venus-pro.rules
 sudo udevadm control --reload-rules
 ```
@@ -40,23 +40,20 @@ Run the Flatpak with:
 flatpak run com.github.es00bac.venusprolinux
 ```
 
-### Arch Linux (AUR)
+### Arch Linux
+
+Install the release package, which pacman manages like any other:
 
 ```bash
-yay -S venusprolinux-git
+curl -fLO https://github.com/Es00bac/UtechSmart-Venus-Pro-Linux-MMO-Mouse-Utility/releases/download/v0.4.1/venusprolinux-0.4.1-1-any.pkg.tar.zst
+sudo pacman -U venusprolinux-0.4.1-1-any.pkg.tar.zst
 ```
 
-The repository now contains a complete VCS `PKGBUILD`; it uses Arch's
-`python-pyqt6` and `python-hidapi` packages and does not build Python packages
-with pip.
-
-If an AUR helper fails with `cannot stat 'packaging/linux/venusprolinux.desktop'`,
-its build recipe still uses the old desktop filename. Refresh the **PKGBUILD**
-as well as the Git sources; rebuilding fresh sources with the same recipe
-does not fix it. The current recipe uses
-`com.github.es00bac.venusprolinux.desktop` and includes `venus_keys.py`, which
-the current Widgets interface requires. A desktop-file symlink alone is not
-a complete fix for an older recipe.
+The `venusprolinux-git` package on the AUR is out of date and fails with
+`cannot stat 'packaging/linux/venusprolinux.desktop'`. Until it is updated,
+use the release package above or build this repository's own `PKGBUILD`,
+which uses Arch's `python-pyqt6` and `python-hidapi` packages and does not
+build Python packages with pip.
 
 To build using this repository's maintained recipe instead of a helper's
 cached recipe, use a fresh working directory on Arch Linux:
@@ -291,9 +288,8 @@ prefix is required: `uaccess` must be set before systemd processes
 
 When upgrading a manual installation, remove your old
 `/etc/udev/rules.d/99-venus-pro.rules` after installing the new rule. Native
-package upgrades replace the old packaged rule automatically. The v0.4.0
-download above retains its historical source filename but is installed
-with the corrected `70-` prefix.
+package upgrades replace the old packaged rule automatically, and
+`install.sh` removes the old file itself.
 
 ### “Mouse detected, but open failed”
 
