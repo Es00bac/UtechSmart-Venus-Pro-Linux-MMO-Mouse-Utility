@@ -10,6 +10,11 @@ Key discovery from binary analysis: F3 writes persist to flash but DO NOT take
 effect until the firmware receives a category-specific F1 commit command. The F1
 commit byte 3 is a bitmask: 0x01=enter write mode, 0x02=commit buttons,
 0x04=commit DPI, 0x08=commit LED, 0x10=exit/finalize.
+
+F5 is not a polling command: hid.exe builds it in one place (0x410420, report
+[02 F5 arg] then Sleep(100)) and passes only 0 and 1, as a session bracket
+(SESSION_BEGIN/SESSION_END). The polling rate is one code per profile at
+0x0032 + 2*profile (ADDR_POLLING), written with F3 and committed with F1 02 08.
 """
 from __future__ import annotations
 
@@ -33,7 +38,16 @@ RID_LONG = 0x03   # 64 bytes total
 CMD_WRITE_CTRL = 0xF1
 CMD_READ = 0xF2
 CMD_WRITE_DATA = 0xF3
-CMD_POLLING = 0xF5
+CMD_SESSION = 0xF5   # session bracket; hid.exe sends only F5 00 and F5 01
+
+# -- F5 session bracket --
+# hid.exe opens with F5 00 and closes with F5 01 its read-all (0x413830:
+# calls at 0x41384b/0x41387e), its write-all on Apply (0x413430: 0x4135a0/
+# 0x4137b0) and its macro upload (0x4142b0: 0x4142be/0x4142d8); its
+# single-setting writes (polling 0x410830, lighting 0x410940, DPI 0x410cf0)
+# are not bracketed.
+SESSION_BEGIN = bytes([RID_SHORT, CMD_SESSION, 0x00])
+SESSION_END = bytes([RID_SHORT, CMD_SESSION, 0x01])
 
 # -- F1 Write Control Sub-commands --
 # Byte 2 = 0x02 means "flash write control", byte 3 is category bitmask.
@@ -48,6 +62,9 @@ CTRL_POST_COMMIT_1 = bytes([RID_SHORT, CMD_WRITE_CTRL, 0x00, 0x04])
 CTRL_POST_COMMIT_2 = bytes([RID_SHORT, CMD_WRITE_CTRL, 0x00, 0x01])
 CTRL_RESET         = bytes([RID_SHORT, CMD_WRITE_CTRL, 0x00, 0x00])
 CTRL_FLASH_ACK     = bytes([RID_SHORT, CMD_WRITE_CTRL, 0x00, 0x08])
+# hid.exe follows its polling write with F1 02 08 (0x410230 with its commit
+# flag, packet at 0x41034e); the same bytes as CTRL_COMMIT_LED above.
+CTRL_COMMIT_POLLING = bytes([RID_SHORT, CMD_WRITE_CTRL, 0x02, 0x08])
 
 # Backward compat alias
 CTRL_COMMIT = CTRL_COMMIT_BTN
@@ -56,9 +73,15 @@ CTRL_COMMIT = CTRL_COMMIT_BTN
 # DPI summary region (status mirror, NOT used by firmware for active DPI)
 ADDR_DPI_SUMMARY     = 0x0020  # 10 bytes: mirrors DPI values (not authoritative)
 ADDR_DPI_STAGE       = 0x002C  # 2 bytes: [current_stage, 0x00]
-ADDR_LED_SETTINGS    = 0x0032  # 5 bytes: LED mode/color settings
-ADDR_LED_EXTRA       = 0x0038  # 3 bytes: additional LED config
 ADDR_ACTIVE_PROFILE  = 0x003D  # 1 byte: (value & 0x7F) = active profile index
+
+# Polling: profile p keeps [code, 0x00] at 0x0032 + 2*p (codes in POLLING_RATES).
+# hid.exe reads them as F2 0x32 x5 and F2 0x38 x3, codes at data bytes 0/2/4
+# and 0/2 (0x40f990), and writes all five as F3 0x32 [p0 00 p1 00 p2 00] and
+# F3 0x38 [p3 00 p4 00], then F1 02 08 (0x410230). Its UI (ldcfg.exe 0x40eac5)
+# stores 125/250/500/1000 Hz as 8/4/2/1 and defaults to 2.
+ADDR_POLLING = 0x0032
+ADDR_POLLING_PROFILE = [ADDR_POLLING + 2 * p for p in range(5)]
 
 # Profile base addresses
 PROFILE_BASE_ADDRS = [0x0040, 0x0100, 0x01B0, 0x0260, 0x0310]
@@ -91,8 +114,6 @@ ADDR_BUTTONS_END   = ADDR_BUTTONS + 2 + 20*4   # End of button map region
 
 # Legacy aliases for backward compat
 ADDR_DPI = ADDR_DPI_SUMMARY
-ADDR_LED = ADDR_LED_SETTINGS
-ADDR_POLLING = ADDR_LED_EXTRA  # Polling is set via F5, not memory write
 
 # Button type constants
 BTN_LMB = 0x81
@@ -204,7 +225,7 @@ DEFAULT_BUTTON_MAP = [
 # Here we just need the mapping for building packets
 
 
-# Polling rates supported by Holtek
+# Polling rates supported by Holtek: the per-profile codes at ADDR_POLLING_PROFILE
 POLLING_RATES = {
     125: 0x08,   # Code for 125Hz
     250: 0x04,   # Code for 250Hz
@@ -476,20 +497,30 @@ class HoltekDevice:
         self.send_feature(CTRL_RESET.ljust(16, b'\x00'))
         # Device disconnects immediately — no delay needed
 
-    def set_polling_rate(self, rate: int) -> None:
-        """Set polling rate directly using F5 command.
+    def read_polling_codes(self) -> list[int]:
+        """Each profile's polling code, read the way hid.exe does (0x40f990)."""
+        first = self.read_memory(ADDR_POLLING, 5)
+        second = self.read_memory(ADDR_POLLING + 6, 3)
+        return [first[0], first[2], first[4], second[0], second[2]]
 
-        This takes effect immediately (no F1 commit needed).
+    def set_polling_rate(self, rate: int, profile: int | None = None) -> None:
+        """Set one profile's polling rate, or every profile's when ``profile`` is None.
+
+        Like hid.exe's polling write (0x410230): the five codes go out as two F3
+        records, then F1 02 08. The other profiles keep the codes read first.
+        No reset follows; hid.exe sends none either.
         """
-        code = POLLING_RATES.get(rate)
-        if code is None:
-            raise ValueError(f"Unsupported polling rate: {rate}Hz")
-        pkt = bytearray(16)
-        pkt[0] = RID_SHORT
-        pkt[1] = CMD_POLLING
-        pkt[2] = code
-        self.send_feature(bytes(pkt))
-        time.sleep(0.10)  # Windows driver uses 100ms delay after polling change
+        code = polling_code(rate)
+        if profile is not None and not 0 <= profile <= 4:
+            raise ValueError(f"Profile must be 0-4, got {profile}")
+        codes = self.read_polling_codes()
+        for index in (range(5) if profile is None else (profile,)):
+            codes[index] = code
+        for packet in build_polling_packets(codes):
+            self.send_feature(packet)
+            time.sleep(0.008)
+        self.send_feature(CTRL_COMMIT_POLLING.ljust(16, b'\x00'))
+        time.sleep(0.01)
 
     # -- DPI Methods (verified by user testing 2026-02-14) --
 
@@ -670,7 +701,8 @@ def read_all_config(device: HoltekDevice, profile: int | None = None) -> dict:
         profile: Profile index (0-4). If None, reads the active profile from device.
 
     Returns dict with keys: 'dpi_stages', 'dpi_stage_current', 'active_profile',
-    'led', 'buttons', 'raw_button_data', 'dpi_raw', 'led_raw'
+    'led', 'buttons', 'raw_button_data', 'dpi_raw', 'led_raw',
+    'polling_codes' (all five profiles) and 'polling_rate' (this profile, Hz or None)
     """
     config = {}
 
@@ -708,6 +740,9 @@ def read_all_config(device: HoltekDevice, profile: int | None = None) -> dict:
         settings_data.extend(chunk)
     config['dpi_raw'] = bytes(settings_data[0:16])
     config['led_raw'] = bytes(settings_data[16:32])
+    at = ADDR_POLLING - 0x20
+    config['polling_codes'] = [settings_data[at + 2 * p] for p in range(5)]
+    config['polling_rate'] = POLLING_CODE_TO_RATE.get(config['polling_codes'][read_profile])
 
     # Read button map region for the selected profile
     btn_base = ADDR_BUTTONS_PROFILE[read_profile]
@@ -966,16 +1001,31 @@ def build_led_packets(r: int, g: int, b: int, mode: int = 3,
     return packets
 
 
-def build_polling_packet(rate: int) -> bytes:
-    """Build F5 polling rate packet."""
+def polling_code(rate: int) -> int:
+    """The code hid.exe stores for a polling rate in Hz."""
     code = POLLING_RATES.get(rate)
     if code is None:
         raise ValueError(f"Unsupported polling rate: {rate}Hz")
-    pkt = bytearray(16)
-    pkt[0] = RID_SHORT
-    pkt[1] = CMD_POLLING
-    pkt[2] = code
-    return bytes(pkt)
+    return code
+
+
+def build_polling_packets(codes) -> list[bytes]:
+    """The two F3 writes hid.exe sends for the five profiles' polling codes.
+
+    0x410230: [02 F3 32 00 06 00 00 00 p0 00 p1 00 p2 00] and
+    [02 F3 38 00 04 00 00 00 p3 00 p4 00], each 16 bytes; F1 02 08 follows.
+    """
+    codes = [int(code) & 0xFF for code in codes]
+    if len(codes) != 5:
+        raise ValueError(f"Expected 5 polling codes, got {len(codes)}")
+    data = bytes(byte for code in codes for byte in (code, 0x00))
+    packets = []
+    for addr, chunk in ((ADDR_POLLING, data[0:6]), (ADDR_POLLING + 6, data[6:10])):
+        pkt = bytearray(16)
+        pkt[0:5] = (RID_SHORT, CMD_WRITE_DATA, addr & 0xFF, addr >> 8 & 0xFF, len(chunk))
+        pkt[8:8 + len(chunk)] = chunk
+        packets.append(bytes(pkt))
+    return packets
 
 
 def button_action_to_gui(btn_type: int, code: int,

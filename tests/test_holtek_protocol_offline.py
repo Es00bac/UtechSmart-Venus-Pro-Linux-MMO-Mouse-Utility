@@ -72,5 +72,29 @@ class HoltekProtocolTests(unittest.TestCase):
         self.assertEqual(profile["current_stage"], 2)
 
 
+class HoltekPollingTests(unittest.TestCase):
+    def test_polling_is_written_per_profile_as_hid_exe_does(self):
+        # hid.exe 0x410230: two F3 records at 0x32/0x38, codes 08/04/02/01.
+        packets = hp.build_polling_packets([8, 4, 2, 1, 2])
+        self.assertEqual(packets[0][:14], bytes.fromhex("02f33200060000000800040002 00".replace(" ", "")))
+        self.assertEqual(packets[1][:12], bytes.fromhex("02f338000400000001000200"))
+        self.assertEqual(hp.polling_code(1000), 0x01)
+        with self.assertRaises(ValueError):
+            hp.polling_code(333)
+
+    def test_set_polling_rate_keeps_other_profiles(self):
+        memory = bytearray(0x500)
+        memory[hp.ADDR_POLLING:hp.ADDR_POLLING + 10] = bytes((8, 0, 4, 0, 2, 0, 1, 0, 2, 0))
+        sent = []
+        device = hp.HoltekDevice(b"/dev/fake")
+        device.read_memory = lambda address, length: bytes(memory[address:address + length])
+        device.send_feature = sent.append
+        device.set_polling_rate(1000, profile=1)
+        writes = [bytes(p) for p in sent if p[1] == 0xF3]
+        self.assertEqual(writes[0][8:14], bytes((8, 0, 1, 0, 2, 0)))
+        self.assertEqual(writes[1][8:12], bytes((1, 0, 2, 0)))
+        self.assertNotIn(0xF5, [p[1] for p in sent])
+
+
 if __name__ == "__main__":
     unittest.main()
