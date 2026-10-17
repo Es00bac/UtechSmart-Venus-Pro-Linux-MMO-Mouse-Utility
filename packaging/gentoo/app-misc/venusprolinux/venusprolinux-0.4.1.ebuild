@@ -19,7 +19,7 @@ EGIT_REPO_URI="file:///home/cabewse/git/QindaVenusPro.git
 	file:///home/cabewse/work_space/QindaVenusPro"
 # AGENT-NOTE: an immutable pin, not a branch - a package built twice must be
 # the same package. Bump it together with the version.
-EGIT_COMMIT="f48d6f91a869dda0e4e9408f6baf9ee3f1216f0f"
+EGIT_COMMIT="b4233618dabe7051c1ad3085d6398373324f157c"
 
 LICENSE="MIT"
 SLOT="0"
@@ -100,10 +100,9 @@ src_install() {
 	newins "${APP_ID}.appdata.xml" "${APP_ID}.metainfo.xml"
 
 	# The reviewed rule: uaccess ACLs on the hidraw and USB nodes of the
-	# three supported VID:PIDs, mode 0660 as the fallback.
-	# This ebuild pins older sources containing the historical filename.
-	cp packaging/linux/99-venus-pro.rules "${T}/70-venus-pro.rules" || die
-	udev_dorules "${T}/70-venus-pro.rules"
+	# three supported VID:PIDs, mode 0660 as the fallback. The 70- prefix
+	# puts uaccess ahead of systemd's 73-seat-late.rules, which applies it.
+	udev_dorules packaging/linux/70-venus-pro.rules
 
 	dodoc README.md PROTOCOL.md docs/MACRO_EDITOR.md docs/QINDATK_UI.md
 }
