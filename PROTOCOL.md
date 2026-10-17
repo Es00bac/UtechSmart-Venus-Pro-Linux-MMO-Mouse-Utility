@@ -433,23 +433,37 @@ Confirmed Holtek profile data represented by the UI now includes:
   unit is 200 DPI;
 - per-profile lighting records `[80, R, G, B, mode, brightness, speed, 03]`;
 - physical Profile Switch (`8d`), DPI Up (`8a`), and DPI Down (`89`) button
-  actions.
+  actions;
+- Profile Up (`94`) and Profile Down (`95`) actions;
+- keyboard records `[90, 00, usage, 00]` for a single key and
+  `[8f, modifiers, usage, 00]` for a key with standard HID modifier bits
+  (`01` Ctrl, `02` Shift, `04` Alt, `08` Win).
+
+The `94`/`95`/`8f` encodings come from the vendor's wired utility
+(`Setup_UtechSmart_16400DPI_VENUS_Gaming_Mouse_1.3.4.exe`, whose `hid.exe`
+opens `HID#VID_04D9&PID_FC55`). Its device-read decoder at `0x40efb0` and
+its function table at `0x47d470` (six-byte records: UI function ID, then the
+four button-record bytes) map Profile +/- to `94`/`95` and the Basic and
+Advanced shortcuts to `8f` records, for example Cut `8f 01 1b`, Find
+`8f 01 09`, Alt+Tab `8f 04 2b` and Lock PC (Win+L) `8f 08 0f`. The same table
+lists consumer keys as `8e 01 usage_lo usage_hi` (Play/Pause `8e 01 cd 00`);
+the application does not expose those yet. These records match issue #27's
+factory-programmed mouse. **Vendor binary; field report**
 
 When editing Holtek DPI, the application preserves the read color indices and
 current stage instead of zeroing both fields. Effect speed is exposed as a raw
 byte because its storage location is known but its user-facing scale is
-firmware-defined. Holtek keyboard-button records contain one HID usage and no
-modifier field. **Binary, live implementation history**
+firmware-defined. **Binary, live implementation history**
 
 ## Protocol-to-UI coverage
 
 | Capability | Areson UI | Holtek UI |
 |---|---|---|
 | Physical button map | 16 mapped controls | 19 physical entries (unused slot hidden) |
-| Keyboard binding | key + Ctrl/Shift/Alt/GUI | one key; modifiers disabled |
+| Keyboard binding | key + Ctrl/Shift/Alt/GUI | key + Ctrl/Shift/Alt/Win |
 | Mouse actions | left/right/middle/back/forward | left/right/middle/back/forward |
 | DPI button actions | loop/up/down on mapped controls | up/down, including physical top buttons |
-| Profile switching | generic type hidden for this one-profile model | confirmed `8d` action exposed |
+| Profile switching | generic type hidden for this one-profile model | switch `8d`, up `94`, down `95` |
 | Hardware macros | 16 slots, editor and repeat modes | disabled; no compatible format confirmed |
 | Polling | 125/250/500/1000 Hz | 125/250/500/1000 Hz |
 | Lighting | color, known modes, brightness/speed, battery gauge | per-profile color/mode/brightness/speed |

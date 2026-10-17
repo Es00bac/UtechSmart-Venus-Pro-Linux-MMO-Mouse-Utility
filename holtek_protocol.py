@@ -103,7 +103,10 @@ BTN_FORWARD = 0x85
 BTN_DPI_UP = 0x8A
 BTN_DPI_DOWN = 0x89  # Holtek uses 0x89 (not 0x8C like Venus Pro)
 BTN_PROFILE = 0x8D
+BTN_KEY_COMBO = 0x8F  # [8F, HID modifier bits, usage, 00]: Ctrl+X, Alt+Tab, ...
 BTN_KEYBOARD = 0x90
+BTN_PROFILE_UP = 0x94
+BTN_PROFILE_DOWN = 0x95
 BTN_FIRE = 0x92      # Fire Key / rapid click (Holtek-specific)
 BTN_DISABLED = 0x00
 
@@ -117,6 +120,9 @@ BUTTON_TYPE_NAMES = {
     BTN_DPI_UP: "DPI Up",
     BTN_DPI_DOWN: "DPI Down",
     BTN_PROFILE: "Profile Switch",
+    BTN_PROFILE_UP: "Profile Up",
+    BTN_PROFILE_DOWN: "Profile Down",
+    BTN_KEY_COMBO: "Keyboard Key",
     BTN_KEYBOARD: "Keyboard Key",
     BTN_FIRE: "Fire Key",
     BTN_DISABLED: "Disabled",
@@ -133,6 +139,8 @@ ACTION_TO_BTN_TYPE = {
     "DPI Down": BTN_DPI_DOWN,
     "DPI Control": None,  # handled specially
     "Profile Switch": BTN_PROFILE,
+    "Profile Up": BTN_PROFILE_UP,
+    "Profile Down": BTN_PROFILE_DOWN,
     "Keyboard Key": BTN_KEYBOARD,
     "Fire Key": BTN_FIRE,
     "Disabled": BTN_DISABLED,
@@ -777,6 +785,10 @@ def build_button_entry(action: str, params: dict) -> bytes:
     """
     if action == "Keyboard Key":
         hid_key = params.get("key", 0)
+        modifier = params.get("mod", 0) & 0xFF
+        if modifier:
+            # The vendor utility stores Cut (Ctrl+X), Alt+Tab, Win+L etc. this way.
+            return bytes([BTN_KEY_COMBO, modifier, hid_key, 0x00])
         return bytes([BTN_KEYBOARD, 0x00, hid_key, 0x00])
 
     elif action == "Left Click":
@@ -801,6 +813,10 @@ def build_button_entry(action: str, params: dict) -> bytes:
 
     elif action == "Profile Switch":
         return bytes([BTN_PROFILE, 0x00, 0x00, 0x00])
+    elif action == "Profile Up":
+        return bytes([BTN_PROFILE_UP, 0x00, 0x00, 0x00])
+    elif action == "Profile Down":
+        return bytes([BTN_PROFILE_DOWN, 0x00, 0x00, 0x00])
 
     elif action == "Fire Key":
         # Holtek fire key: type 0x92, type_hi=repeat, code_lo=0x01
@@ -1000,6 +1016,12 @@ def button_action_to_gui(btn_type: int, code: int,
         return "DPI Control", {"func": 3}
     elif btn_type == BTN_PROFILE:
         return "Profile Switch", {}
+    elif btn_type == BTN_PROFILE_UP:
+        return "Profile Up", {}
+    elif btn_type == BTN_PROFILE_DOWN:
+        return "Profile Down", {}
+    elif btn_type == BTN_KEY_COMBO:
+        return "Keyboard Key", {"key": code, "mod": type_hi}
     elif btn_type == BTN_FIRE:
         return "Fire Key", {"repeat": type_hi}
     elif btn_type == BTN_KEYBOARD:
